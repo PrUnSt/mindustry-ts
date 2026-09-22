@@ -1,1 +1,21 @@
-export {};
+// 源: arc-core/src/arc/struct/*.java (集合库统一导出)
+export {Seq, SeqIterable, SeqIterator, iteratorsAllocated} from './Seq';
+export {ObjectMap} from './ObjectMap';
+export {IntMap} from './IntMap';
+export {ObjectIntMap} from './ObjectIntMap';
+export {LongMap} from './LongMap';
+export {IntSet} from './IntSet';
+export {ObjectSet, tableSize} from './ObjectSet';
+export {OrderedSet} from './OrderedSet';
+export {OrderedMap} from './OrderedMap';
+export {ArrayMap} from './ArrayMap';
+export {Bits} from './Bits';
+export {EnumSet} from './EnumSet';
+export {GridBits} from './GridBits';
+export {GridMap} from './GridMap';
+export {IntSeq} from './IntSeq';
+export {FloatSeq} from './FloatSeq';
+export {LongSeq} from './LongSeq';
+export {Queue, QueueIterable, QueueIterator} from './Queue';
+export {hashOf, equalsOf, identityHashOf} from './Hash';
+export {jsIterator} from './Iterators';
