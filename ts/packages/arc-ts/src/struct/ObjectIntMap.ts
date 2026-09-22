@@ -19,7 +19,7 @@ export class ObjectIntMap<K>{
     threshold: number;
 
     protected shift: number;
-    protected mask: number;
+    mask: number;
 
     private entries1: Entries<K> | null = null;
     private entries2: Entries<K> | null = null;
@@ -32,20 +32,6 @@ export class ObjectIntMap<K>{
     constructor();
     constructor(initialCapacity: number);
     constructor(initialCapacity: number, loadFactor: number);
-    constructor(initialCapacity: number = 51, loadFactor: number = 0.8){
-        if(loadFactor <= 0 || loadFactor >= 1)
-            throw new Error("loadFactor must be > 0 and < 1: " + loadFactor);
-        this.loadFactor = loadFactor;
-
-        const ts = tableSize(initialCapacity, loadFactor);
-        this.threshold = Math.floor(ts * loadFactor);
-        this.mask = ts - 1;
-        this.shift = 32 + Math.clz32(this.mask);
-
-        this.keyTable = new Array<K | null>(ts);
-        this.valueTable = new Array<number>(ts).fill(0);
-    }
-
     /** 创建与指定 map 相同的新 map. */
     constructor(map: ObjectIntMap<K>);
     constructor(a?: any, b?: any){
@@ -77,7 +63,7 @@ export class ObjectIntMap<K>{
     /**
      * 返回指定 item 在 [0, mask] 内的索引. 默认实现使用斐波那契哈希.
      */
-    protected place(item: K): number{
+    place(item: K): number{
         const h = BigInt.asIntN(64, BigInt(hashOf(item) | 0));
         const prod = h * 0x9e3779b97f4a7c15n;
         const shifted = BigInt.asUintN(64, prod) >> BigInt(this.shift & 63);
@@ -95,25 +81,14 @@ export class ObjectIntMap<K>{
         }
     }
 
-    put(key: K, value: number): void{
-        let i = this.locateKey(key);
-        if(i >= 0){ // 已有 key
-            this.valueTable[i] = value;
-            return;
-        }
-        i = -(i + 1); // 找到空位
-        this.keyTable[i] = key;
-        this.valueTable[i] = value;
-        if(++this.size >= this.threshold) this.resize(this.keyTable.length << 1);
-    }
-
-    /** @return 与指定 key 关联的旧值, 或默认值. */
-    put(key: K, value: number, defaultValue: number): number{
+    put(key: K, value: number): void;
+    put(key: K, value: number, defaultValue: number): number;
+    put(key: K, value: number, defaultValue?: number): any{
         let i = this.locateKey(key);
         if(i >= 0){ // 已有 key
             const oldValue = this.valueTable[i];
             this.valueTable[i] = value;
-            return oldValue;
+            return defaultValue === undefined ? undefined : oldValue;
         }
         i = -(i + 1); // 找到空位
         this.keyTable[i] = key;
@@ -122,18 +97,11 @@ export class ObjectIntMap<K>{
         return defaultValue;
     }
 
-    putMissing(key: K, value: number): void{
+    putMissing(key: K, value: number): void;
+    putMissing(key: K, value: number, defaultValue: number): number;
+    putMissing(key: K, value: number, defaultValue?: number): any{
         let i = this.locateKey(key);
-        if(i >= 0) return; // 已有 key
-        i = -(i + 1); // 找到空位
-        this.keyTable[i] = key;
-        this.valueTable[i] = value;
-        if(++this.size >= this.threshold) this.resize(this.keyTable.length << 1);
-    }
-
-    putMissing(key: K, value: number, defaultValue: number): number{
-        let i = this.locateKey(key);
-        if(i >= 0) return this.valueTable[i]; // 已有 key
+        if(i >= 0) return defaultValue === undefined ? undefined : this.valueTable[i]; // 已有 key
         i = -(i + 1); // 找到空位
         this.keyTable[i] = key;
         this.valueTable[i] = value;
@@ -141,19 +109,22 @@ export class ObjectIntMap<K>{
         return defaultValue;
     }
 
-    putAll(map: ObjectIntMap<K>): void{
-        this.ensureCapacity(map.size);
-        const keyTable = map.keyTable;
-        const valueTable = map.valueTable;
-        for(let i = 0, n = keyTable.length; i < n; i++){
-            const key = keyTable[i];
-            if(key !== null) this.put(key, valueTable[i]);
+    putAll(map: ObjectIntMap<K>): void;
+    putAll(...values: unknown[]): void;
+    putAll(...args: any[]): void{
+        if(args.length === 1 && args[0] instanceof ObjectIntMap){
+            const map = args[0] as ObjectIntMap<K>;
+            this.ensureCapacity(map.size);
+            const keyTable = map.keyTable;
+            const valueTable = map.valueTable;
+            for(let i = 0, n = keyTable.length; i < n; i++){
+                const key = keyTable[i];
+                if(key !== null) this.put(key, valueTable[i]);
+            }
+            return;
         }
-    }
-
-    putAll(...values: unknown[]): void{
-        for(let i = 0; i < values.length / 2; i++){
-            this.put(values[i * 2] as K, values[i * 2 + 1] as number);
+        for(let i = 0; i < args.length / 2; i++){
+            this.put(args[i * 2] as K, args[i * 2 + 1] as number);
         }
     }
 
@@ -178,48 +149,42 @@ export class ObjectIntMap<K>{
         }
     }
 
-    get(key: K): number{
-        return this.get(key, 0);
-    }
-
-    /** @return 与指定 key 关联的值, 或默认值. */
-    get(key: K, defaultValue: number): number{
+    get(key: K): number;
+    get(key: K, defaultValue: number): number;
+    get(key: K, defaultValue: number = 0): number{
         if(key === null || key === undefined) return defaultValue;
         const i = this.locateKey(key);
         return i < 0 ? defaultValue : this.valueTable[i];
     }
 
-    increment(key: K): number{
-        return this.increment(key, 0, 1);
-    }
-
-    increment(key: K, increment: number): number{
-        return this.increment(key, 0, increment);
-    }
-
-    /**
-     * @return key 的当前值并递增存储值. 若 key 不在 map 中, 放入 defaultValue + increment 并返回 defaultValue.
-     */
-    increment(key: K, defaultValue: number, increment: number): number{
+    increment(key: K): number;
+    increment(key: K, increment: number): number;
+    increment(key: K, defaultValue: number, increment: number): number;
+    increment(key: K, defaultValue?: number, increment?: number): number{
+        let def = 0;
+        let inc = 1;
+        if(arguments.length === 2){
+            inc = arguments[1] as number;
+        }else if(arguments.length === 3){
+            def = defaultValue!;
+            inc = increment!;
+        }
         let i = this.locateKey(key);
         if(i >= 0){ // 已有 key
             const oldValue = this.valueTable[i];
-            this.valueTable[i] += increment;
+            this.valueTable[i] += inc;
             return oldValue;
         }
         i = -(i + 1); // 找到空位
         this.keyTable[i] = key;
-        this.valueTable[i] = defaultValue + increment;
+        this.valueTable[i] = def + inc;
         if(++this.size >= this.threshold) this.resize(this.keyTable.length << 1);
-        return defaultValue;
+        return def;
     }
 
-    remove(key: K): number{
-        return this.remove(key, 0);
-    }
-
-    /** @return 被移除 key 的值, 或默认值. */
-    remove(key: K, defaultValue: number): number{
+    remove(key: K): number;
+    remove(key: K, defaultValue: number): number;
+    remove(key: K, defaultValue: number = 0): number{
         let i = this.locateKey(key);
         if(i < 0) return defaultValue;
         const keyTable = this.keyTable;
@@ -263,22 +228,23 @@ export class ObjectIntMap<K>{
     }
 
     /** 清空 map 并将备份数组缩减为指定容量 / loadFactor, 若更大. */
-    clear(maximumCapacity: number): void{
-        const ts = tableSize(maximumCapacity, this.loadFactor);
-        if(this.keyTable.length <= ts){
-            this.clear();
+    clear(maximumCapacity: number): void;
+    clear(): void;
+    clear(maximumCapacity?: number): void{
+        if(maximumCapacity !== undefined){
+            const ts = tableSize(maximumCapacity, this.loadFactor);
+            if(this.keyTable.length <= ts){
+                this.clear();
+                return;
+            }
+            this.size = 0;
+            this.resize(ts);
             return;
         }
-        this.size = 0;
-        this.resize(ts);
-    }
-
-    clear(): void{
         if(this.size === 0) return;
         this.size = 0;
         for(let i = 0; i < this.keyTable.length; i++) this.keyTable[i] = null;
     }
-
     /** @return 指定值是否在 map 中. */
     containsValue(value: number): boolean{
         const keyTable = this.keyTable;
@@ -403,16 +369,18 @@ export class ObjectIntMap<K>{
             this.entries1 = new Entries<K>(this);
             this.entries2 = new Entries<K>(this);
         }
-        if(!this.entries1.valid){
-            this.entries1.reset();
-            this.entries1.valid = true;
-            this.entries2.valid = false;
-            return this.entries1;
+        const entries1 = this.entries1!;
+        const entries2 = this.entries2!;
+        if(!entries1.valid){
+            entries1.reset();
+            entries1.valid = true;
+            entries2.valid = false;
+            return entries1;
         }
-        this.entries2.reset();
-        this.entries2.valid = true;
-        this.entries1.valid = false;
-        return this.entries2;
+        entries2.reset();
+        entries2.valid = true;
+        entries1.valid = false;
+        return entries2;
     }
 
     /**
@@ -423,16 +391,18 @@ export class ObjectIntMap<K>{
             this.values1 = new Values(this);
             this.values2 = new Values(this);
         }
-        if(!this.values1.valid){
-            this.values1.reset();
-            this.values1.valid = true;
-            this.values2.valid = false;
-            return this.values1;
+        const values1 = this.values1!;
+        const values2 = this.values2!;
+        if(!values1.valid){
+            values1.reset();
+            values1.valid = true;
+            values2.valid = false;
+            return values1;
         }
-        this.values2.reset();
-        this.values2.valid = true;
-        this.values1.valid = false;
-        return this.values2;
+        values2.reset();
+        values2.valid = true;
+        values1.valid = false;
+        return values2;
     }
 
     /**
@@ -443,16 +413,18 @@ export class ObjectIntMap<K>{
             this.keys1 = new Keys<K>(this);
             this.keys2 = new Keys<K>(this);
         }
-        if(!this.keys1.valid){
-            this.keys1.reset();
-            this.keys1.valid = true;
-            this.keys2.valid = false;
-            return this.keys1;
+        const keys1 = this.keys1!;
+        const keys2 = this.keys2!;
+        if(!keys1.valid){
+            keys1.reset();
+            keys1.valid = true;
+            keys2.valid = false;
+            return keys1;
         }
-        this.keys2.reset();
-        this.keys2.valid = true;
-        this.keys1.valid = false;
-        return this.keys2;
+        keys2.reset();
+        keys2.valid = true;
+        keys1.valid = false;
+        return keys2;
     }
 
     /** JS for..of 支持 (迭代 entries). */
@@ -460,7 +432,6 @@ export class ObjectIntMap<K>{
         return jsIterator(this.entries());
     }
 }
-
 export class Entry<K>{
     key!: K;
     value = 0;
@@ -584,15 +555,12 @@ export class Values extends MapIterator<unknown>{
     }
 
     /** @return 包含剩余值的新数组. */
-    toSeq(): IntSeq{
-        const array = new IntSeq(true, this.map.size);
-        while(this.hasNextValue)
-            array.add(this.next());
-        return array;
-    }
-
-    /** 将剩余值添加到指定数组. */
-    toSeq(array: IntSeq): IntSeq{
+    toSeq(): IntSeq;
+    toSeq(array: IntSeq): IntSeq;
+    toSeq(array?: IntSeq): IntSeq{
+        if(array === undefined){
+            array = new IntSeq(true, this.map.size);
+        }
         while(this.hasNextValue)
             array.add(this.next());
         return array;
@@ -618,12 +586,12 @@ export class Keys<K> extends MapIterator<K>{
     }
 
     /** @return 包含剩余 key 的新数组. */
-    toSeq(): Seq<K>{
-        return this.toSeq(new Seq<K>(true, this.map.size));
-    }
-
-    /** 将剩余 key 添加到数组. */
-    toSeq(array: Seq<K>): Seq<K>{
+    toSeq(): Seq<K>;
+    toSeq(array: Seq<K>): Seq<K>;
+    toSeq(array?: Seq<K>): Seq<K>{
+        if(array === undefined){
+            array = new Seq<K>(true, this.map.size);
+        }
         while(this.hasNextValue)
             array.add(this.next());
         return array;

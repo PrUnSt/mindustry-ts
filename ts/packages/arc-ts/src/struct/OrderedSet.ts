@@ -17,35 +17,30 @@ export class OrderedSet<T> extends ObjectSet<T>{
     constructor(initialCapacity: number, loadFactor: number);
     constructor(set: OrderedSet<T>);
     constructor(a?: any, b?: any){
+        super(a instanceof OrderedSet ? 51 : (a === undefined ? 51 : (a as number)), b === undefined ? 0.8 : (b as number));
         if(a instanceof OrderedSet){
-            super(a as OrderedSet<T>);
-            this.items = new Seq<T>((a as OrderedSet<T>).items);
+            const set = a as OrderedSet<T>;
+            // 直接拷贝基础哈希表 (Java: super(set) 即 ObjectSet 拷贝构造).
+            this.keyTable = set.keyTable.slice();
+            this.size = set.size;
+            this.threshold = set.threshold;
+            this.mask = set.mask;
+            this.shift = set.shift;
+            this.loadFactor = set.loadFactor;
+            this.items = new Seq<T>(set.items);
             return;
         }
-        if(b !== undefined){
-            super(a as number, b as number);
-            this.items = new Seq<T>(a as number);
-            return;
-        }
-        if(a !== undefined){
-            super(a as number);
-            this.items = new Seq<T>(a as number);
-            return;
-        }
-        super();
-        this.items = new Seq<T>();
+        this.items = new Seq<T>(a === undefined ? 16 : (a as number));
     }
 
-    add(key: T): boolean{
-        if(!super.add(key)) return false;
-        this.items.add(key);
-        return true;
-    }
-
-    /**
-     * 将 key 放到指定索引. 若 key 已存在返回 false 且 (如需要) 改变其索引.
-     */
-    add(key: T, index: number): boolean{
+    add(key: T): boolean;
+    add(key: T, index: number): boolean;
+    add(key: T, index?: number): boolean{
+        if(index === undefined){
+            if(!super.add(key)) return false;
+            this.items.add(key);
+            return true;
+        }
         if(!super.add(key)){
             const oldIndex = this.items.indexOf(key, true);
             if(oldIndex !== index) this.items.insert(index, this.items.remove(oldIndex));
@@ -55,11 +50,22 @@ export class OrderedSet<T> extends ObjectSet<T>{
         return true;
     }
 
-    addAll(set: OrderedSet<T>): void{
-        this.ensureCapacity(set.size);
-        const keys = set.items.items;
-        for(let i = 0, n = set.items.size; i < n; i++)
-            this.add(keys[i]);
+    addAll(array: Seq<T>): void;
+    addAll(array: Seq<T>, offset: number, length: number): void;
+    addAll(array: T[]): boolean;
+    addAll(...array: T[]): boolean;
+    addAll(array: T[], offset: number, length: number): boolean;
+    addAll(set: OrderedSet<T>): void;
+    addAll(...args: any[]): any{
+        if(args.length === 1 && args[0] instanceof OrderedSet){
+            const set = args[0] as OrderedSet<T>;
+            this.ensureCapacity(set.size);
+            const keys = set.items.items;
+            for(let i = 0, n = set.items.size; i < n; i++)
+                this.add(keys[i]);
+            return undefined;
+        }
+        return (super.addAll as (...a: any[]) => any)(...args);
     }
 
     ensureCapacity(additionalCapacity: number): void{
@@ -101,16 +107,17 @@ export class OrderedSet<T> extends ObjectSet<T>{
         return true;
     }
 
-    clear(maximumCapacity: number): void{
-        this.items.clear();
-        super.clear(maximumCapacity);
-    }
-
-    clear(): void{
+    clear(maximumCapacity: number): void;
+    clear(): void;
+    clear(maximumCapacity?: number): void{
+        if(maximumCapacity !== undefined){
+            this.items.clear();
+            super.clear(maximumCapacity);
+            return;
+        }
         this.items.clear();
         super.clear();
     }
-
     orderedItems(): Seq<T>{
         return this.items;
     }
@@ -144,39 +151,36 @@ export class OrderedSet<T> extends ObjectSet<T>{
             this.orderedIterator1 = new OrderedSetIterator<T>(this);
             this.orderedIterator2 = new OrderedSetIterator<T>(this);
         }
-        if(!this.orderedIterator1.valid){
-            this.orderedIterator1.reset();
-            this.orderedIterator1.valid = true;
-            this.orderedIterator2.valid = false;
-            return this.orderedIterator1;
+        const orderedIterator1 = this.orderedIterator1!;
+        const orderedIterator2 = this.orderedIterator2!;
+        if(!orderedIterator1.valid){
+            orderedIterator1.reset();
+            orderedIterator1.valid = true;
+            orderedIterator2.valid = false;
+            return orderedIterator1;
         }
-        this.orderedIterator2.reset();
-        this.orderedIterator2.valid = true;
-        this.orderedIterator1.valid = false;
-        return this.orderedIterator2;
+        orderedIterator2.reset();
+        orderedIterator2.valid = true;
+        orderedIterator1.valid = false;
+        return orderedIterator2;
     }
 
-    toString(): string{
-        if(this.size === 0) return "{}";
-        const items = this.items.items;
-        let buffer = "{";
-        buffer += String(items[0]);
-        for(let i = 1; i < this.size; i++){
-            buffer += ", ";
-            buffer += String(items[i]);
+    toString(): string;
+    toString(separator: string): string;
+    toString(separator?: string): string{
+        if(separator === undefined){
+            if(this.size === 0) return "{}";
+            const items = this.items.items;
+            let buffer = "{";
+            buffer += String(items[0]);
+            for(let i = 1; i < this.size; i++){
+                buffer += ", ";
+                buffer += String(items[i]);
+            }
+            buffer += "}";
+            return buffer;
         }
-        buffer += "}";
-        return buffer;
-    }
-
-    toString(separator: string): string{
         return this.items.toString(separator);
-    }
-
-    static with<T>(...array: T[]): OrderedSet<T>{
-        const set = new OrderedSet<T>();
-        set.addAll(array as any);
-        return set;
     }
 }
 
@@ -208,14 +212,15 @@ export class OrderedSetIterator<K> extends ObjectSetIterator<K>{
         (this.set as unknown as OrderedSet<K>).removeIndex(this.nextIndex);
     }
 
-    toSeq(array: Seq<K>): Seq<K>{
+    toSeq(array: Seq<K>): Seq<K>;
+    toSeq(): Seq<K>;
+    toSeq(array?: Seq<K>): Seq<K>{
+        if(array === undefined){
+            array = new Seq<K>(true, this.set.size - this.nextIndex);
+        }
         array.addAll(this.items, this.nextIndex, this.items.size - this.nextIndex);
         this.nextIndex = this.items.size;
         this.hasNextValue = false;
         return array;
-    }
-
-    toSeq(): Seq<K>{
-        return this.toSeq(new Seq<K>(true, this.set.size - this.nextIndex));
     }
 }

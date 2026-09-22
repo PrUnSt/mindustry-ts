@@ -170,11 +170,9 @@ export class Queue<T>{
         return result;
     }
 
-    contains(value: T): boolean{
-        return this.contains(value, true);
-    }
-
-    contains(value: T, identity: boolean): boolean{
+    contains(value: T): boolean;
+    contains(value: T, identity: boolean): boolean;
+    contains(value: T, identity: boolean = true): boolean{
         return this.indexOf(value, identity) !== -1;
     }
 
@@ -182,46 +180,46 @@ export class Queue<T>{
      * 返回 value 在队列中第一次出现的索引, 或 -1.
      * @param identity true 时用 === 比较, false 时用 .equals() 比较.
      */
-    indexOf(value: T, identity: boolean): number{
+    indexOf(value: T, identity: boolean): number;
+    indexOf(value: Boolf<T>): number;
+    indexOf(value: T | Boolf<T>, identity: boolean = true): number{
         if(this.size === 0) return -1;
         const values = this.values;
         const head = this.head, tail = this.tail;
-        if(identity || value === null || value === undefined){
+        if(typeof value === 'function'){
+            const pred = value as Boolf<T>;
             if(head < tail){
                 for(let i = head; i < tail; i++)
-                    if(values[i] === value) return i - head;
+                    if(pred(values[i])) return i - head;
             }else{
                 for(let i = head, n = values.length; i < n; i++)
-                    if(values[i] === value) return i - head;
+                    if(pred(values[i])) return i - head;
                 for(let i = 0; i < tail; i++)
-                    if(values[i] === value) return i + values.length - head;
+                    if(pred(values[i])) return i + values.length - head;
             }
-        }else{
-            if(head < tail){
-                for(let i = head; i < tail; i++)
-                    if(equalsOf(value, values[i])) return i - head;
-            }else{
-                for(let i = head, n = values.length; i < n; i++)
-                    if(equalsOf(value, values[i])) return i - head;
-                for(let i = 0; i < tail; i++)
-                    if(equalsOf(value, values[i])) return i + values.length - head;
-            }
+            return -1;
         }
-        return -1;
-    }
-
-    indexOf(value: Boolf<T>): number{
-        if(this.size === 0) return -1;
-        const values = this.values;
-        const head = this.head, tail = this.tail;
-        if(head < tail){
-            for(let i = head; i < tail; i++)
-                if(value(values[i])) return i - head;
+        const item = value;
+        if(identity || item === null || item === undefined){
+            if(head < tail){
+                for(let i = head; i < tail; i++)
+                    if(values[i] === item) return i - head;
+            }else{
+                for(let i = head, n = values.length; i < n; i++)
+                    if(values[i] === item) return i - head;
+                for(let i = 0; i < tail; i++)
+                    if(values[i] === item) return i + values.length - head;
+            }
         }else{
-            for(let i = head, n = values.length; i < n; i++)
-                if(value(values[i])) return i - head;
-            for(let i = 0; i < tail; i++)
-                if(value(values[i])) return i + values.length - head;
+            if(head < tail){
+                for(let i = head; i < tail; i++)
+                    if(equalsOf(item, values[i])) return i - head;
+            }else{
+                for(let i = head, n = values.length; i < n; i++)
+                    if(equalsOf(item, values[i])) return i - head;
+                for(let i = 0; i < tail; i++)
+                    if(equalsOf(item, values[i])) return i + values.length - head;
+            }
         }
         return -1;
     }
@@ -477,17 +475,19 @@ export class QueueIterable<T>{
             this.iterator1 = new QueueIterator(this);
             this.iterator2 = new QueueIterator(this);
         }
+        const iterator1 = this.iterator1!;
+        const iterator2 = this.iterator2!;
 
-        if(this.iterator1.done){
-            this.iterator1.index = 0;
-            this.iterator1.done = false;
-            return this.iterator1;
+        if(iterator1.done){
+            iterator1.index = 0;
+            iterator1.done = false;
+            return iterator1;
         }
 
-        if(this.iterator2.done){
-            this.iterator2.index = 0;
-            this.iterator2.done = false;
-            return this.iterator2;
+        if(iterator2.done){
+            iterator2.index = 0;
+            iterator2.done = false;
+            return iterator2;
         }
         // 3 层以上嵌套循环时分配新迭代器.
         return new QueueIterator(this);

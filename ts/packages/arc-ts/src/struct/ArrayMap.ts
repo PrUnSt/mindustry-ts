@@ -11,8 +11,8 @@ import {Entry} from './ObjectMap';
  * 与 {@link Seq} 类似, 若 ordered 为 false, 移除元素时会把最后一个元素移到被删位置.
  */
 export class ArrayMap<K, V>{
-    keys: K[];
-    values: V[];
+    keysArr: K[];
+    valuesArr: V[];
     size = 0;
     ordered: boolean;
 
@@ -35,50 +35,51 @@ export class ArrayMap<K, V>{
         if(a instanceof ArrayMap){
             const array = a as ArrayMap<K, V>;
             this.ordered = array.ordered;
-            this.keys = array.keys.slice(0, array.size);
-            this.values = array.values.slice(0, array.size);
+            this.keysArr = array.keysArr.slice(0, array.size);
+            this.valuesArr = array.valuesArr.slice(0, array.size);
             this.size = array.size;
             return;
         }
         if(typeof a === 'boolean'){
             this.ordered = a;
-            this.keys = new Array<K>(b === undefined ? 16 : (b as number));
-            this.values = new Array<V>(b === undefined ? 16 : (b as number));
+            this.keysArr = new Array<K>(b === undefined ? 16 : (b as number));
+            this.valuesArr = new Array<V>(b === undefined ? 16 : (b as number));
         }else if(typeof a === 'number'){
             this.ordered = true;
-            this.keys = new Array<K>(a);
-            this.values = new Array<V>(a);
+            this.keysArr = new Array<K>(a);
+            this.valuesArr = new Array<V>(a);
         }else{
             // ArrayMap(Class, Class) -> Java 源码为 this(false, 16, ...)
             this.ordered = false;
-            this.keys = new Array<K>(16);
-            this.values = new Array<V>(16);
+            this.keysArr = new Array<K>(16);
+            this.valuesArr = new Array<V>(16);
         }
     }
 
-    put(key: K, value: V): number{
-        let index = this.indexOfKey(key);
-        if(index === -1){
-            if(this.size === this.keys.length) this.resize(Math.max(8, Math.floor(this.size * 1.75)));
-            index = this.size++;
+    put(key: K, value: V): number;
+    put(key: K, value: V, index: number): number;
+    put(key: K, value: V, index?: number): number{
+        if(index === undefined){
+            let i = this.indexOfKey(key);
+            if(i === -1){
+                if(this.size === this.keysArr.length) this.resize(Math.max(8, Math.floor(this.size * 1.75)));
+                i = this.size++;
+            }
+            this.keysArr[i] = key;
+            this.valuesArr[i] = value;
+            return i;
         }
-        this.keys[index] = key;
-        this.values[index] = value;
-        return index;
-    }
-
-    put(key: K, value: V, index: number): number{
         const existingIndex = this.indexOfKey(key);
         if(existingIndex !== -1)
             this.removeIndex(existingIndex);
-        else if(this.size === this.keys.length)
+        else if(this.size === this.keysArr.length)
             this.resize(Math.max(8, Math.floor(this.size * 1.75)));
         for(let i = this.size; i > index; i--){
-            this.keys[i] = this.keys[i - 1];
-            this.values[i] = this.values[i - 1];
+            this.keysArr[i] = this.keysArr[i - 1];
+            this.valuesArr[i] = this.valuesArr[i - 1];
         }
-        this.keys[index] = key;
-        this.values[index] = value;
+        this.keysArr[index] = key;
+        this.valuesArr[index] = value;
         this.size++;
         return index;
     }
@@ -89,10 +90,10 @@ export class ArrayMap<K, V>{
         if(offset + length > map.size)
             throw new Error("offset + length must be <= size: " + offset + " + " + length + " <= " + map.size);
         const sizeNeeded = this.size + length - offset;
-        if(sizeNeeded >= this.keys.length) this.resize(Math.max(8, Math.floor(sizeNeeded * 1.75)));
+        if(sizeNeeded >= this.keysArr.length) this.resize(Math.max(8, Math.floor(sizeNeeded * 1.75)));
         for(let i = 0; i < length; i++){
-            this.keys[this.size + i] = map.keys[offset + i];
-            this.values[this.size + i] = map.values[offset + i];
+            this.keysArr[this.size + i] = map.keysArr[offset + i];
+            this.valuesArr[this.size + i] = map.valuesArr[offset + i];
         }
         this.size += length;
     }
@@ -101,14 +102,14 @@ export class ArrayMap<K, V>{
      * @return 指定 key 的值. 注意: 逆序对每个 key 做 .equals() 比较.
      */
     get(key: K): V | null{
-        const keys = this.keys;
+        const keys = this.keysArr;
         let i = this.size - 1;
         if(key === null || key === undefined){
             for(; i >= 0; i--)
-                if(keys[i] === key) return this.values[i];
+                if(keys[i] === key) return this.valuesArr[i];
         }else{
             for(; i >= 0; i--)
-                if(equalsOf(key, keys[i])) return this.values[i];
+                if(equalsOf(key, keys[i])) return this.valuesArr[i];
         }
         return null;
     }
@@ -118,67 +119,67 @@ export class ArrayMap<K, V>{
      * @param identity true 时用 === 比较, false 时用 .equals() 比较.
      */
     getKey(value: V, identity: boolean): K | null{
-        const values = this.values;
+        const values = this.valuesArr;
         let i = this.size - 1;
         if(identity || value === null || value === undefined){
             for(; i >= 0; i--)
-                if(values[i] === value) return this.keys[i];
+                if(values[i] === value) return this.keysArr[i];
         }else{
             for(; i >= 0; i--)
-                if(equalsOf(value, values[i])) return this.keys[i];
+                if(equalsOf(value, values[i])) return this.keysArr[i];
         }
         return null;
     }
 
     getKeyAt(index: number): K{
         if(index >= this.size) throw new Error(String(index));
-        return this.keys[index];
+        return this.keysArr[index];
     }
 
     getValueAt(index: number): V{
         if(index >= this.size) throw new Error(String(index));
-        return this.values[index];
+        return this.valuesArr[index];
     }
 
     firstKey(): K{
         if(this.size === 0) throw new Error("Map is empty.");
-        return this.keys[0];
+        return this.keysArr[0];
     }
 
     firstValue(): V{
         if(this.size === 0) throw new Error("Map is empty.");
-        return this.values[0];
+        return this.valuesArr[0];
     }
 
     setKey(index: number, key: K): void{
         if(index >= this.size) throw new Error(String(index));
-        this.keys[index] = key;
+        this.keysArr[index] = key;
     }
 
     setValue(index: number, value: V): void{
         if(index >= this.size) throw new Error(String(index));
-        this.values[index] = value;
+        this.valuesArr[index] = value;
     }
 
     insert(index: number, key: K, value: V): void{
         if(index > this.size) throw new Error(String(index));
-        if(this.size === this.keys.length) this.resize(Math.max(8, Math.floor(this.size * 1.75)));
+        if(this.size === this.keysArr.length) this.resize(Math.max(8, Math.floor(this.size * 1.75)));
         if(this.ordered){
             for(let i = this.size; i > index; i--){
-                this.keys[i] = this.keys[i - 1];
-                this.values[i] = this.values[i - 1];
+                this.keysArr[i] = this.keysArr[i - 1];
+                this.valuesArr[i] = this.valuesArr[i - 1];
             }
         }else{
-            this.keys[this.size] = this.keys[index];
-            this.values[this.size] = this.values[index];
+            this.keysArr[this.size] = this.keysArr[index];
+            this.valuesArr[this.size] = this.valuesArr[index];
         }
         this.size++;
-        this.keys[index] = key;
-        this.values[index] = value;
+        this.keysArr[index] = key;
+        this.valuesArr[index] = value;
     }
 
     containsKey(key: K): boolean{
-        const keys = this.keys;
+        const keys = this.keysArr;
         let i = this.size - 1;
         if(key === null || key === undefined){
             while(i >= 0)
@@ -192,7 +193,7 @@ export class ArrayMap<K, V>{
 
     /** @param identity true 时用 === 比较, false 时用 .equals() 比较. */
     containsValue(value: V, identity: boolean): boolean{
-        const values = this.values;
+        const values = this.valuesArr;
         let i = this.size - 1;
         if(identity || value === null || value === undefined){
             while(i >= 0)
@@ -205,7 +206,7 @@ export class ArrayMap<K, V>{
     }
 
     indexOfKey(key: K): number{
-        const keys = this.keys;
+        const keys = this.keysArr;
         if(key === null || key === undefined){
             for(let i = 0, n = this.size; i < n; i++)
                 if(keys[i] === key) return i;
@@ -217,7 +218,7 @@ export class ArrayMap<K, V>{
     }
 
     indexOfValue(value: V, identity: boolean): number{
-        const values = this.values;
+        const values = this.valuesArr;
         if(identity || value === null || value === undefined){
             for(let i = 0, n = this.size; i < n; i++)
                 if(values[i] === value) return i;
@@ -229,11 +230,11 @@ export class ArrayMap<K, V>{
     }
 
     removeKey(key: K): V | null{
-        const keys = this.keys;
+        const keys = this.keysArr;
         if(key === null || key === undefined){
             for(let i = 0, n = this.size; i < n; i++){
                 if(keys[i] === key){
-                    const value = this.values[i];
+                    const value = this.valuesArr[i];
                     this.removeIndex(i);
                     return value;
                 }
@@ -241,7 +242,7 @@ export class ArrayMap<K, V>{
         }else{
             for(let i = 0, n = this.size; i < n; i++){
                 if(equalsOf(key, keys[i])){
-                    const value = this.values[i];
+                    const value = this.valuesArr[i];
                     this.removeIndex(i);
                     return value;
                 }
@@ -251,7 +252,7 @@ export class ArrayMap<K, V>{
     }
 
     removeValue(value: V, identity: boolean): boolean{
-        const values = this.values;
+        const values = this.valuesArr;
         if(identity || value === null || value === undefined){
             for(let i = 0, n = this.size; i < n; i++){
                 if(values[i] === value){
@@ -273,19 +274,19 @@ export class ArrayMap<K, V>{
     /** 移除指定索引处的键值对. */
     removeIndex(index: number): void{
         if(index >= this.size) throw new Error(String(index));
-        const keys = this.keys;
+        const keys = this.keysArr;
         this.size--;
         if(this.ordered){
             for(let i = index; i < this.size; i++){
                 keys[i] = keys[i + 1];
-                this.values[i] = this.values[i + 1];
+                this.valuesArr[i] = this.valuesArr[i + 1];
             }
         }else{
             keys[index] = keys[this.size];
-            this.values[index] = this.values[this.size];
+            this.valuesArr[index] = this.valuesArr[this.size];
         }
         (keys[this.size] as any) = null;
-        (this.values[this.size] as any) = null;
+        (this.valuesArr[this.size] as any) = null;
     }
 
     /** @return map 是否为空. */
@@ -295,27 +296,29 @@ export class ArrayMap<K, V>{
 
     /** @return 最后一个 key. */
     peekKey(): K{
-        return this.keys[this.size - 1];
+        return this.keysArr[this.size - 1];
     }
 
     /** @return 最后一个 value. */
     peekValue(): V{
-        return this.values[this.size - 1];
+        return this.valuesArr[this.size - 1];
     }
 
     /** 清空 map, 若备份数组更大则缩减为指定容量. */
-    clear(maximumCapacity: number): void{
-        if(this.keys.length <= maximumCapacity){
-            this.clear();
+    clear(maximumCapacity: number): void;
+    clear(): void;
+    clear(maximumCapacity?: number): void{
+        if(maximumCapacity !== undefined){
+            if(this.keysArr.length <= maximumCapacity){
+                this.clear();
+                return;
+            }
+            this.size = 0;
+            this.resize(maximumCapacity);
             return;
         }
-        this.size = 0;
-        this.resize(maximumCapacity);
-    }
-
-    clear(): void{
-        const keys = this.keys;
-        const values = this.values;
+        const keys = this.keysArr;
+        const values = this.valuesArr;
         for(let i = 0, n = this.size; i < n; i++){
             (keys[i] as any) = null;
             (values[i] as any) = null;
@@ -327,7 +330,7 @@ export class ArrayMap<K, V>{
      * 将备份数组缩减到实际条目数.
      */
     shrink(): void{
-        if(this.keys.length === this.size) return;
+        if(this.keysArr.length === this.size) return;
         this.resize(this.size);
     }
 
@@ -338,42 +341,42 @@ export class ArrayMap<K, V>{
         if(additionalCapacity < 0)
             throw new Error("additionalCapacity must be >= 0: " + additionalCapacity);
         const sizeNeeded = this.size + additionalCapacity;
-        if(sizeNeeded >= this.keys.length) this.resize(Math.max(8, sizeNeeded));
+        if(sizeNeeded >= this.keysArr.length) this.resize(Math.max(8, sizeNeeded));
     }
 
     protected resize(newSize: number): void{
         const newKeys = new Array<K>(newSize);
-        for(let i = 0; i < Math.min(this.size, newKeys.length); i++) newKeys[i] = this.keys[i];
-        this.keys = newKeys;
+        for(let i = 0; i < Math.min(this.size, newKeys.length); i++) newKeys[i] = this.keysArr[i];
+        this.keysArr = newKeys;
 
         const newValues = new Array<V>(newSize);
-        for(let i = 0; i < Math.min(this.size, newValues.length); i++) newValues[i] = this.values[i];
-        this.values = newValues;
+        for(let i = 0; i < Math.min(this.size, newValues.length); i++) newValues[i] = this.valuesArr[i];
+        this.valuesArr = newValues;
     }
 
     reverse(): void{
         for(let i = 0, lastIndex = this.size - 1, n = this.size / 2; i < n; i++){
             const ii = lastIndex - i;
-            const tempKey = this.keys[i];
-            this.keys[i] = this.keys[ii];
-            this.keys[ii] = tempKey;
+            const tempKey = this.keysArr[i];
+            this.keysArr[i] = this.keysArr[ii];
+            this.keysArr[ii] = tempKey;
 
-            const tempValue = this.values[i];
-            this.values[i] = this.values[ii];
-            this.values[ii] = tempValue;
+            const tempValue = this.valuesArr[i];
+            this.valuesArr[i] = this.valuesArr[ii];
+            this.valuesArr[ii] = tempValue;
         }
     }
 
     shuffle(): void{
         for(let i = this.size - 1; i >= 0; i--){
             const ii = Mathf.random(i);
-            const tempKey = this.keys[i];
-            this.keys[i] = this.keys[ii];
-            this.keys[ii] = tempKey;
+            const tempKey = this.keysArr[i];
+            this.keysArr[i] = this.keysArr[ii];
+            this.keysArr[ii] = tempKey;
 
-            const tempValue = this.values[i];
-            this.values[i] = this.values[ii];
-            this.values[ii] = tempValue;
+            const tempValue = this.valuesArr[i];
+            this.valuesArr[i] = this.valuesArr[ii];
+            this.valuesArr[ii] = tempValue;
         }
     }
 
@@ -383,15 +386,15 @@ export class ArrayMap<K, V>{
     truncate(newSize: number): void{
         if(this.size <= newSize) return;
         for(let i = newSize; i < this.size; i++){
-            (this.keys[i] as any) = null;
-            (this.values[i] as any) = null;
+            (this.keysArr[i] as any) = null;
+            (this.valuesArr[i] as any) = null;
         }
         this.size = newSize;
     }
 
     hashCode(): number{
-        const keys = this.keys;
-        const values = this.values;
+        const keys = this.keysArr;
+        const values = this.valuesArr;
         let h = 0;
         for(let i = 0, n = this.size; i < n; i++){
             const key = keys[i];
@@ -407,8 +410,8 @@ export class ArrayMap<K, V>{
         if(!(obj instanceof ArrayMap)) return false;
         const other = obj as ArrayMap<unknown, unknown>;
         if(other.size !== this.size) return false;
-        const keys = this.keys;
-        const values = this.values;
+        const keys = this.keysArr;
+        const values = this.valuesArr;
         for(let i = 0, n = this.size; i < n; i++){
             const key = keys[i];
             const value = values[i];
@@ -423,8 +426,8 @@ export class ArrayMap<K, V>{
 
     toString(): string{
         if(this.size === 0) return "{}";
-        const keys = this.keys;
-        const values = this.values;
+        const keys = this.keysArr;
+        const values = this.valuesArr;
         let buffer = "{";
         buffer += String(keys[0]);
         buffer += "=";
@@ -451,16 +454,18 @@ export class ArrayMap<K, V>{
             this.entries1 = new Entries<K, V>(this);
             this.entries2 = new Entries<K, V>(this);
         }
-        if(!this.entries1.valid){
-            this.entries1.index = 0;
-            this.entries1.valid = true;
-            this.entries2.valid = false;
-            return this.entries1;
+        const entries1 = this.entries1!;
+        const entries2 = this.entries2!;
+        if(!entries1.valid){
+            entries1.index = 0;
+            entries1.valid = true;
+            entries2.valid = false;
+            return entries1;
         }
-        this.entries2.index = 0;
-        this.entries2.valid = true;
-        this.entries1.valid = false;
-        return this.entries2;
+        entries2.index = 0;
+        entries2.valid = true;
+        entries1.valid = false;
+        return entries2;
     }
 
     /**
@@ -471,16 +476,18 @@ export class ArrayMap<K, V>{
             this.valuesIter1 = new Values<V>(this);
             this.valuesIter2 = new Values<V>(this);
         }
-        if(!this.valuesIter1.valid){
-            this.valuesIter1.index = 0;
-            this.valuesIter1.valid = true;
-            this.valuesIter2.valid = false;
-            return this.valuesIter1;
+        const valuesIter1 = this.valuesIter1!;
+        const valuesIter2 = this.valuesIter2!;
+        if(!valuesIter1.valid){
+            valuesIter1.index = 0;
+            valuesIter1.valid = true;
+            valuesIter2.valid = false;
+            return valuesIter1;
         }
-        this.valuesIter2.index = 0;
-        this.valuesIter2.valid = true;
-        this.valuesIter1.valid = false;
-        return this.valuesIter2;
+        valuesIter2.index = 0;
+        valuesIter2.valid = true;
+        valuesIter1.valid = false;
+        return valuesIter2;
     }
 
     /**
@@ -491,16 +498,18 @@ export class ArrayMap<K, V>{
             this.keysIter1 = new Keys<K>(this);
             this.keysIter2 = new Keys<K>(this);
         }
-        if(!this.keysIter1.valid){
-            this.keysIter1.index = 0;
-            this.keysIter1.valid = true;
-            this.keysIter2.valid = false;
-            return this.keysIter1;
+        const keysIter1 = this.keysIter1!;
+        const keysIter2 = this.keysIter2!;
+        if(!keysIter1.valid){
+            keysIter1.index = 0;
+            keysIter1.valid = true;
+            keysIter2.valid = false;
+            return keysIter1;
         }
-        this.keysIter2.index = 0;
-        this.keysIter2.valid = true;
-        this.keysIter1.valid = false;
-        return this.keysIter2;
+        keysIter2.index = 0;
+        keysIter2.valid = true;
+        keysIter1.valid = false;
+        return keysIter2;
     }
 
     /** JS for..of 支持 (迭代 entries). */
@@ -532,8 +541,8 @@ export class Entries<K, V>{
     next(): Entry<K, V>{
         if(this.index >= this.map.size) throw new Error(String(this.index));
         if(!this.valid) throw new Error("#iterator() cannot be used nested.");
-        this.entry.key = this.map.keys[this.index];
-        this.entry.value = this.map.values[this.index++];
+        this.entry.key = this.map.keysArr[this.index];
+        this.entry.value = this.map.valuesArr[this.index++];
         return this.entry;
     }
 
@@ -568,7 +577,7 @@ export class Values<V>{
     next(): V{
         if(this.index >= this.map.size) throw new Error(String(this.index));
         if(!this.valid) throw new Error("#iterator() cannot be used nested.");
-        return this.map.values[this.index++];
+        return this.map.valuesArr[this.index++];
     }
 
     remove(): void{
@@ -580,12 +589,13 @@ export class Values<V>{
         this.index = 0;
     }
 
-    toArray(): Seq<V>{
-        return new Seq<V>(true, this.map.values, this.index, this.map.size - this.index);
-    }
-
-    toArray(array: Seq<V>): Seq<V>{
-        array.addAll(this.map.values, this.index, this.map.size - this.index);
+    toArray(): Seq<V>;
+    toArray(array: Seq<V>): Seq<V>;
+    toArray(array?: Seq<V>): Seq<V>{
+        if(array === undefined){
+            return new Seq<V>(true, this.map.valuesArr, this.index, this.map.size - this.index);
+        }
+        array.addAll(this.map.valuesArr, this.index, this.map.size - this.index);
         return array;
     }
 }
@@ -611,7 +621,7 @@ export class Keys<K>{
     next(): K{
         if(this.index >= this.map.size) throw new Error(String(this.index));
         if(!this.valid) throw new Error("#iterator() cannot be used nested.");
-        return this.map.keys[this.index++];
+        return this.map.keysArr[this.index++];
     }
 
     remove(): void{
@@ -623,12 +633,13 @@ export class Keys<K>{
         this.index = 0;
     }
 
-    toArray(): Seq<K>{
-        return new Seq<K>(true, this.map.keys, this.index, this.map.size - this.index);
-    }
-
-    toArray(array: Seq<K>): Seq<K>{
-        array.addAll(this.map.keys, this.index, this.map.size - this.index);
+    toArray(): Seq<K>;
+    toArray(array: Seq<K>): Seq<K>;
+    toArray(array?: Seq<K>): Seq<K>{
+        if(array === undefined){
+            return new Seq<K>(true, this.map.keysArr, this.index, this.map.size - this.index);
+        }
+        array.addAll(this.map.keysArr, this.index, this.map.size - this.index);
         return array;
     }
 }

@@ -24,7 +24,7 @@ export class IntMap<V>{
     private threshold: number;
 
     protected shift: number;
-    protected mask: number;
+    mask: number;
 
     private entries1: Entries<V> | null = null;
     private entries2: Entries<V> | null = null;
@@ -47,20 +47,6 @@ export class IntMap<V>{
     constructor();
     constructor(initialCapacity: number);
     constructor(initialCapacity: number, loadFactor: number);
-    constructor(initialCapacity: number = 51, loadFactor: number = 0.8){
-        if(loadFactor <= 0 || loadFactor >= 1)
-            throw new Error("loadFactor must be > 0 and < 1: " + loadFactor);
-        this.loadFactor = loadFactor;
-
-        const ts = tableSize(initialCapacity, loadFactor);
-        this.threshold = Math.floor(ts * loadFactor);
-        this.mask = ts - 1;
-        this.shift = 32 + Math.clz32(this.mask);
-
-        this.keyTable = new Array<number>(ts).fill(0);
-        this.valueTable = new Array<V | null>(ts);
-    }
-
     /** 创建与指定 map 相同的新 map. */
     constructor(map: IntMap<V>);
     constructor(a?: any, b?: any){
@@ -94,7 +80,7 @@ export class IntMap<V>{
     /**
      * 返回指定 item 在 [0, mask] 内的索引. 默认实现使用斐波那契哈希.
      */
-    protected place(item: number): number{
+    place(item: number): number{
         const h = BigInt.asIntN(64, BigInt(item | 0));
         const prod = h * 0x9e3779b97f4a7c15n;
         const shifted = BigInt.asUintN(64, prod) >> BigInt(this.shift & 63);
@@ -176,25 +162,25 @@ export class IntMap<V>{
         }
     }
 
-    get(key: number): V | null{
-        if(key === 0) return this.hasZeroValue ? this.zeroValue : null;
-        const i = this.locateKey(key);
-        return i >= 0 ? this.valueTable[i] : null;
-    }
-
-    get(key: number, defaultValue: V): V{
-        if(key === 0) return this.hasZeroValue ? (this.zeroValue as V) : defaultValue;
-        const i = this.locateKey(key);
-        return i >= 0 ? (this.valueTable[i] as V) : defaultValue;
-    }
-
-    get(key: number, defaultValue: Prov<V>): V{
-        let out = this.get(key);
-        if(out === null || out === undefined){
-            out = defaultValue();
-            this.put(key, out);
+    get(key: number): V | null;
+    get(key: number, defaultValue: V): V;
+    get(key: number, defaultValue: Prov<V>): V;
+    get(key: number, defaultValue?: any): any{
+        let out: V | null;
+        if(key === 0){
+            out = this.hasZeroValue ? this.zeroValue : null;
+        }else{
+            const i = this.locateKey(key);
+            out = i >= 0 ? this.valueTable[i] : null;
         }
-        return out;
+        if(out !== null && out !== undefined) return out;
+        if(arguments.length < 2 || defaultValue === undefined) return null;
+        if(typeof defaultValue === 'function'){
+            const v = (defaultValue as Prov<V>)();
+            this.put(key, v);
+            return v;
+        }
+        return defaultValue;
     }
 
     /** @return 被移除 key 的值, 或 null. */
@@ -252,19 +238,21 @@ export class IntMap<V>{
     }
 
     /** 清空 map 并将备份数组缩减为指定容量 / loadFactor, 若更大. */
-    clear(maximumCapacity: number): void{
-        const ts = tableSize(maximumCapacity, this.loadFactor);
-        if(this.keyTable.length <= ts){
-            this.clear();
+    clear(maximumCapacity: number): void;
+    clear(): void;
+    clear(maximumCapacity?: number): void{
+        if(maximumCapacity !== undefined){
+            const ts = tableSize(maximumCapacity, this.loadFactor);
+            if(this.keyTable.length <= ts){
+                this.clear();
+                return;
+            }
+            this.size = 0;
+            this.hasZeroValue = false;
+            this.zeroValue = null;
+            this.resize(ts);
             return;
         }
-        this.size = 0;
-        this.hasZeroValue = false;
-        this.zeroValue = null;
-        this.resize(ts);
-    }
-
-    clear(): void{
         if(this.size === 0) return;
         this.size = 0;
         for(let i = 0; i < this.keyTable.length; i++){ this.keyTable[i] = 0; this.valueTable[i] = null; }
@@ -454,16 +442,18 @@ export class IntMap<V>{
             this.entries1 = new Entries<V>(this);
             this.entries2 = new Entries<V>(this);
         }
-        if(!this.entries1.valid){
-            this.entries1.reset();
-            this.entries1.valid = true;
-            this.entries2.valid = false;
-            return this.entries1;
+        const entries1 = this.entries1!;
+        const entries2 = this.entries2!;
+        if(!entries1.valid){
+            entries1.reset();
+            entries1.valid = true;
+            entries2.valid = false;
+            return entries1;
         }
-        this.entries2.reset();
-        this.entries2.valid = true;
-        this.entries1.valid = false;
-        return this.entries2;
+        entries2.reset();
+        entries2.valid = true;
+        entries1.valid = false;
+        return entries2;
     }
 
     /**
@@ -474,16 +464,18 @@ export class IntMap<V>{
             this.values1 = new Values<V>(this);
             this.values2 = new Values<V>(this);
         }
-        if(!this.values1.valid){
-            this.values1.reset();
-            this.values1.valid = true;
-            this.values2.valid = false;
-            return this.values1;
+        const values1 = this.values1!;
+        const values2 = this.values2!;
+        if(!values1.valid){
+            values1.reset();
+            values1.valid = true;
+            values2.valid = false;
+            return values1;
         }
-        this.values2.reset();
-        this.values2.valid = true;
-        this.values1.valid = false;
-        return this.values2;
+        values2.reset();
+        values2.valid = true;
+        values1.valid = false;
+        return values2;
     }
 
     /**
@@ -494,16 +486,18 @@ export class IntMap<V>{
             this.keys1 = new Keys(this);
             this.keys2 = new Keys(this);
         }
-        if(!this.keys1.valid){
-            this.keys1.reset();
-            this.keys1.valid = true;
-            this.keys2.valid = false;
-            return this.keys1;
+        const keys1 = this.keys1!;
+        const keys2 = this.keys2!;
+        if(!keys1.valid){
+            keys1.reset();
+            keys1.valid = true;
+            keys2.valid = false;
+            return keys1;
         }
-        this.keys2.reset();
-        this.keys2.valid = true;
-        this.keys1.valid = false;
-        return this.keys2;
+        keys2.reset();
+        keys2.valid = true;
+        keys1.valid = false;
+        return keys2;
     }
 
     /** JS for..of 支持 (迭代 entries). */
@@ -668,15 +662,12 @@ export class Keys extends MapIterator<unknown>{
     }
 
     /** @return 包含剩余 key 的新数组. */
-    toSeq(): IntSeq{
-        const array = new IntSeq(true, this.map.size);
-        while(this.hasNextValue)
-            array.add(this.next());
-        return array;
-    }
-
-    /** 将剩余 key 添加到指定数组. */
-    toSeq(array: IntSeq): IntSeq{
+    toSeq(): IntSeq;
+    toSeq(array: IntSeq): IntSeq;
+    toSeq(array?: IntSeq): IntSeq{
+        if(array === undefined){
+            array = new IntSeq(true, this.map.size);
+        }
         while(this.hasNextValue)
             array.add(this.next());
         return array;

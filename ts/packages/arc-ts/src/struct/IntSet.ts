@@ -18,7 +18,7 @@ export class IntSet{
     private threshold: number;
 
     protected shift: number;
-    protected mask: number;
+    mask: number;
 
     private iterator1: IntSetIterator | null = null;
     private iterator2: IntSetIterator | null = null;
@@ -27,19 +27,6 @@ export class IntSet{
     constructor();
     constructor(initialCapacity: number);
     constructor(initialCapacity: number, loadFactor: number);
-    constructor(initialCapacity: number = 51, loadFactor: number = 0.8){
-        if(loadFactor <= 0 || loadFactor >= 1)
-            throw new Error("loadFactor must be > 0 and < 1: " + loadFactor);
-        this.loadFactor = loadFactor;
-
-        const ts = tableSize(initialCapacity, loadFactor);
-        this.threshold = Math.floor(ts * loadFactor);
-        this.mask = ts - 1;
-        this.shift = 32 + Math.clz32(this.mask);
-
-        this.keyTable = new Array<number>(ts).fill(0);
-    }
-
     /** 创建与指定集合相同的新集合. */
     constructor(set: IntSet);
     constructor(a?: any, b?: any){
@@ -77,7 +64,7 @@ export class IntSet{
     /**
      * 返回指定 item 在 [0, mask] 内的索引. 默认实现使用斐波那契哈希.
      */
-    protected place(item: number): number{
+    place(item: number): number{
         const h = BigInt.asIntN(64, BigInt(item | 0));
         const prod = h * 0x9e3779b97f4a7c15n;
         const shifted = BigInt.asUintN(64, prod) >> BigInt(this.shift & 63);
@@ -112,6 +99,7 @@ export class IntSet{
 
     addAll(array: IntSeq): void;
     addAll(array: IntSeq, offset: number, length: number): void;
+    addAll(array: number[]): void;
     addAll(...array: number[]): void;
     addAll(array: number[], offset: number, length: number): void;
     addAll(set: IntSet): void;
@@ -209,18 +197,20 @@ export class IntSet{
     }
 
     /** 清空集合并将备份数组缩减为指定容量 / loadFactor, 若更大. */
-    clear(maximumCapacity: number): void{
-        const ts = tableSize(maximumCapacity, this.loadFactor);
-        if(this.keyTable.length <= ts){
-            this.clear();
+    clear(maximumCapacity: number): void;
+    clear(): void;
+    clear(maximumCapacity?: number): void{
+        if(maximumCapacity !== undefined){
+            const ts = tableSize(maximumCapacity, this.loadFactor);
+            if(this.keyTable.length <= ts){
+                this.clear();
+                return;
+            }
+            this.size = 0;
+            this.hasZeroValue = false;
+            this.resize(ts);
             return;
         }
-        this.size = 0;
-        this.hasZeroValue = false;
-        this.resize(ts);
-    }
-
-    clear(): void{
         if(this.size === 0) return;
         this.size = 0;
         for(let i = 0; i < this.keyTable.length; i++) this.keyTable[i] = 0;
@@ -320,16 +310,18 @@ export class IntSet{
             this.iterator1 = new IntSetIterator(this);
             this.iterator2 = new IntSetIterator(this);
         }
-        if(!this.iterator1.valid){
-            this.iterator1.reset();
-            this.iterator1.valid = true;
-            this.iterator2.valid = false;
-            return this.iterator1;
+        const iterator1 = this.iterator1!;
+        const iterator2 = this.iterator2!;
+        if(!iterator1.valid){
+            iterator1.reset();
+            iterator1.valid = true;
+            iterator2.valid = false;
+            return iterator1;
         }
-        this.iterator2.reset();
-        this.iterator2.valid = true;
-        this.iterator1.valid = false;
-        return this.iterator2;
+        iterator2.reset();
+        iterator2.valid = true;
+        iterator1.valid = false;
+        return iterator2;
     }
 
     /** JS for..of 支持. */

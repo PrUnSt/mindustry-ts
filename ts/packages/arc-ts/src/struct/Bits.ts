@@ -152,6 +152,13 @@ export class Bits{
         return true;
     }
 
+    /** @return 给定索引处的位是否为 true (已设置). word 越界时返回 false (与 Java 一致). */
+    get(index: number): boolean{
+        const word = index >>> 6;
+        if(word >= this.bits.length) return false;
+        return (this.bits[word] & (1n << BigInt(index & 0x3f))) !== 0n;
+    }
+
     /**
      * 返回在指定起始索引处或之后第一个设置为 true 的位的索引. 不存在返回 -1.
      */

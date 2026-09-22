@@ -397,11 +397,9 @@ export class IntSeq{
         }
     }
 
-    shuffle(): void{
-        this.shuffle(Mathf.rand);
-    }
-
-    shuffle(rand: Rand): void{
+    shuffle(): void;
+    shuffle(rand: Rand): void;
+    shuffle(rand: Rand = Mathf.rand): void{
         const items = this.items;
         for(let i = this.size - 1; i >= 0; i--){
             const ii = rand.nextInt(i + 1);
@@ -450,22 +448,21 @@ export class IntSeq{
         return true;
     }
 
-    toString(): string{
-        if(this.size === 0) return "[]";
+    toString(): string;
+    toString(separator: string): string;
+    toString(separator?: string): string{
+        if(this.size === 0) return separator === undefined ? "[]" : "";
         const items = this.items;
-        let buffer = "[";
-        buffer += String(items[0]);
-        for(let i = 1; i < this.size; i++){
-            buffer += ", ";
-            buffer += String(items[i]);
+        if(separator === undefined){
+            let buffer = "[";
+            buffer += String(items[0]);
+            for(let i = 1; i < this.size; i++){
+                buffer += ", ";
+                buffer += String(items[i]);
+            }
+            buffer += "]";
+            return buffer;
         }
-        buffer += "]";
-        return buffer;
-    }
-
-    toString(separator: string): string{
-        if(this.size === 0) return "";
-        const items = this.items;
         let buffer = String(items[0]);
         for(let i = 1; i < this.size; i++){
             buffer += separator;

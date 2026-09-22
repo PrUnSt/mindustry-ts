@@ -133,6 +133,7 @@ export class ObjectSet<T>{
 
     addAll(array: Seq<T>): void;
     addAll(array: Seq<T>, offset: number, length: number): void;
+    addAll(array: T[]): boolean;
     addAll(...array: T[]): boolean;
     addAll(array: T[], offset: number, length: number): boolean;
     addAll(set: ObjectSet<T>): void;
@@ -211,7 +212,7 @@ export class ObjectSet<T>{
 
     /** @return 是否移除了该 key. */
     remove(key: T): boolean{
-        const i = this.locateKey(key);
+        let i = this.locateKey(key);
         if(i < 0) return false;
         const keyTable = this.keyTable;
         const mask = this.mask;
@@ -344,14 +345,14 @@ export class ObjectSet<T>{
         while(i-- > 0){
             const key = keyTable[i];
             if(key === null) continue;
-            buffer += String(key === this ? "(this)" : key);
+            buffer += String(key === (this as any) ? "(this)" : key);
             break;
         }
         while(i-- > 0){
             const key = keyTable[i];
             if(key === null) continue;
             buffer += separator;
-            buffer += String(key === this ? "(this)" : key);
+            buffer += String(key === (this as any) ? "(this)" : key);
         }
         return buffer;
     }
@@ -455,15 +456,15 @@ export class ObjectSetIterator<K>{
     }
 
     /** 将剩余值添加到数组. */
-    toSeq(array: Seq<K>): Seq<K>{
+    toSeq(array: Seq<K>): Seq<K>;
+    toSeq(): Seq<K>;
+    toSeq(array?: Seq<K>): Seq<K>{
+        if(array === undefined){
+            array = new Seq<K>(true, this.set.size);
+        }
         while(this.hasNext())
             array.add(this.next());
         return array;
-    }
-
-    /** @return 包含剩余值的新数组. */
-    toSeq(): Seq<K>{
-        return this.toSeq(new Seq<K>(true, this.set.size));
     }
 
     [Symbol.iterator](){

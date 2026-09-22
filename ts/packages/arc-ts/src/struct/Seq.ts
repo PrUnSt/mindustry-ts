@@ -148,10 +148,13 @@ export class Seq<T>{
         return out;
     }
 
-    asMap<K, V>(keygen: Func<T, K>, valgen: Func<T, V>): ObjectMap<K, V>{
+    asMap<K, V>(keygen: Func<T, K>, valgen: Func<T, V>): ObjectMap<K, V>;
+    asMap<K>(keygen: Func<T, K>): ObjectMap<K, T>;
+    asMap<K, V>(keygen: Func<T, K>, valgen?: Func<T, V>): ObjectMap<K, V>{
         const map = new ObjectMap<K, V>();
+        const gen = valgen === undefined ? (((t: T) => t) as unknown as Func<T, V>) : valgen;
         for(let i = 0; i < this.size; i++){
-            map.put(keygen(this.items[i]), valgen(this.items[i]));
+            map.put(keygen(this.items[i]), gen(this.items[i]));
         }
         return map;
     }
@@ -173,12 +176,9 @@ export class Seq<T>{
         return map;
     }
 
-    asMap<K>(keygen: Func<T, K>): ObjectMap<K, T>{
-        return this.asMap(keygen, t => t);
-    }
 
     asSet(): ObjectSet<T>{
-        return ObjectSet.with(this);
+        return ObjectSet.with<T>(this);
     }
 
     copy(): Seq<T>{
@@ -208,13 +208,18 @@ export class Seq<T>{
         return sum;
     }
 
-    each(pred: Boolf<T>, consumer: Cons<T>): void{
-        for(let i = 0; i < this.size; i++){
-            if(pred(this.items[i])) consumer(this.items[i]);
+    each(pred: Boolf<T>, consumer: Cons<T>): void;
+    each(consumer: Cons<T>): void;
+    each(a: any, b?: any): void{
+        if(arguments.length === 2){
+            const pred: Boolf<T> = a;
+            const consumer: Cons<T> = b;
+            for(let i = 0; i < this.size; i++){
+                if(pred(this.items[i])) consumer(this.items[i]);
+            }
+            return;
         }
-    }
-
-    each(consumer: Cons<T>): void{
+        const consumer: Cons<T> = a;
         for(let i = 0; i < this.size; i++){
             consumer(this.items[i]);
         }
@@ -268,17 +273,16 @@ export class Seq<T>{
     }
 
     /** @return 包含映射值的新 int 数组. */
-    mapInt(mapper: Intf<T>): IntSeq{
+    mapInt(mapper: Intf<T>): IntSeq;
+    mapInt(mapper: Intf<T>, retain: Boolf<T>): IntSeq;
+    mapInt(mapper: Intf<T>, retain?: Boolf<T>): IntSeq{
         const arr = new IntSeq(this.size);
-        for(let i = 0; i < this.size; i++){
-            arr.add(mapper(this.items[i]));
+        if(retain === undefined){
+            for(let i = 0; i < this.size; i++){
+                arr.add(mapper(this.items[i]));
+            }
+            return arr;
         }
-        return arr;
-    }
-
-    /** @return 包含映射值的新 int 数组. */
-    mapInt(mapper: Intf<T>, retain: Boolf<T>): IntSeq{
-        const arr = new IntSeq(this.size);
         for(let i = 0; i < this.size; i++){
             const item = this.items[i];
             if(retain(item)){
@@ -314,14 +318,6 @@ export class Seq<T>{
         return true;
     }
 
-    contains(predicate: Boolf<T>): boolean{
-        for(let i = 0; i < this.size; i++){
-            if(predicate(this.items[i])){
-                return true;
-            }
-        }
-        return false;
-    }
 
     min(func: Comparator<T>): T | null;
     min(filter: Boolf<T>, func: Floatf<T>): T | null;
@@ -512,7 +508,15 @@ export class Seq<T>{
     /** 将本数组内容设置为指定数组. */
     set(array: Seq<T>): void;
     set(array: T[]): void;
-    set(array: any): void{
+    set(index: number, value: T): void;
+    set(arrayOrIndex: any, value?: T): void{
+        if(arguments.length === 2){
+            const index = arrayOrIndex as number;
+            if(index >= this.size) throw new Error("index can't be >= size: " + index + " >= " + this.size);
+            this.items[index] = value!;
+            return;
+        }
+        const array = arrayOrIndex;
         if(array === this) return;
         this.clear();
         if(array instanceof Seq){
@@ -532,10 +536,6 @@ export class Seq<T>{
         return this.items[index];
     }
 
-    set(index: number, value: T): void{
-        if(index >= this.size) throw new Error("index can't be >= size: " + index + " >= " + this.size);
-        this.items[index] = value;
-    }
 
     insert(index: number, value: T): void{
         if(index > this.size) throw new Error("index can't be > size: " + index + " > " + this.size);
@@ -574,16 +574,27 @@ export class Seq<T>{
 
     contains(value: T): boolean;
     contains(value: T, identity: boolean): boolean;
-    contains(value: T, identity: boolean = false): boolean{
+    contains(predicate: Boolf<T>): boolean;
+    contains(value: T | Boolf<T>, identity: boolean = false): boolean{
+        if(typeof value === 'function'){
+            const predicate = value as Boolf<T>;
+            for(let i = 0; i < this.size; i++){
+                if(predicate(this.items[i])){
+                    return true;
+                }
+            }
+            return false;
+        }
+        const item = value;
         const items = this.items;
         let i = this.size - 1;
-        if(identity || value === null || value === undefined){
+        if(identity || item === null || item === undefined){
             while(i >= 0)
-                if(items[i--] === value) return true;
+                if(items[i--] === item) return true;
         }else{
             while(i >= 0){
-                const item = items[i--];
-                if(equalsOf(value, item)) return true;
+                const it = items[i--];
+                if(equalsOf(item, it)) return true;
             }
         }
         return false;
@@ -591,22 +602,24 @@ export class Seq<T>{
 
     indexOf(value: T): number;
     indexOf(value: T, identity: boolean): number;
-    indexOf(value: T, identity: boolean = false): number{
-        const items = this.items;
-        if(identity || value === null || value === undefined){
+    indexOf(value: Boolf<T>): number;
+    indexOf(value: T | Boolf<T>, identity: boolean = false): number{
+        if(typeof value === 'function'){
+            const predicate = value as Boolf<T>;
+            const items = this.items;
             for(let i = 0, n = this.size; i < n; i++)
-                if(items[i] === value) return i;
+                if(predicate(items[i])) return i;
+            return -1;
+        }
+        const item = value;
+        const items = this.items;
+        if(identity || item === null || item === undefined){
+            for(let i = 0, n = this.size; i < n; i++)
+                if(items[i] === item) return i;
         }else{
             for(let i = 0, n = this.size; i < n; i++)
-                if(equalsOf(value, items[i])) return i;
+                if(equalsOf(item, items[i])) return i;
         }
-        return -1;
-    }
-
-    indexOf(value: Boolf<T>): number{
-        const items = this.items;
-        for(let i = 0, n = this.size; i < n; i++)
-            if(value(items[i])) return i;
         return -1;
     }
 
@@ -696,19 +709,21 @@ export class Seq<T>{
     }
 
     /** @return 本对象 */
-    removeAll(pred: Boolf<T>): Seq<T>{
-        const iter = this.iterator();
-        while(iter.hasNext()){
-            if(pred(iter.next())){
-                iter.remove();
-            }
-        }
-        return this;
-    }
-
+    removeAll(pred: Boolf<T>): Seq<T>;
     removeAll(array: Seq<T>): boolean;
     removeAll(array: Seq<T>, identity: boolean): boolean;
-    removeAll(array: Seq<T>, identity: boolean = false): boolean{
+    removeAll(arg: Boolf<T> | Seq<T>, identity: boolean = false): Seq<T> | boolean{
+        if(typeof arg === 'function'){
+            const pred = arg;
+            const iter = this.iterator();
+            while(iter.hasNext()){
+                if(pred(iter.next())){
+                    iter.remove();
+                }
+            }
+            return this;
+        }
+        const array = arg;
         let size = this.size;
         const startSize = size;
         const items = this.items;
@@ -739,14 +754,13 @@ export class Seq<T>{
     }
 
     /** 若数组为空, 返回构造器生成的对象; 否则同 pop(). */
-    pop(constructor: Prov<T>): T{
-        if(this.size === 0) return constructor();
-        return this.pop();
-    }
-
-    /** 移除并返回最后一个元素. */
-    pop(): T{
-        if(this.size === 0) throw new Error("Array is empty.");
+    pop(constructor: Prov<T>): T;
+    pop(): T;
+    pop(constructor?: Prov<T>): T{
+        if(this.size === 0){
+            if(constructor !== undefined) return constructor();
+            throw new Error("Array is empty.");
+        }
         --this.size;
         const item = this.items[this.size];
         (this.items[this.size] as any) = null;
@@ -958,28 +972,25 @@ export class Seq<T>{
         this.size = newSize;
     }
 
-    random(rand: Rand): T | null{
-        if(this.size === 0) return null;
-        return this.items[rand.random(0, this.size - 1)];
-    }
-
-    /** @return 数组中的随机元素, 空数组返回 null. */
-    random(): T | null{
-        return this.random(Mathf.rand);
-    }
-
-    /**
-     * @return 数组中排除指定元素的随机元素. 空数组返回 null; 只有一个元素时返回该元素.
-     */
-    random(exclude: T): T | null{
+    random(rand: Rand): T | null;
+    random(): T | null;
+    random(exclude: T): T | null;
+    random(a?: any): T | null{
+        if(arguments.length === 0){
+            return this.random(Mathf.rand);
+        }
+        if(a instanceof Rand){
+            if(this.size === 0) return null;
+            return this.items[a.random(0, this.size - 1)];
+        }
+        // a 为 exclude.
+        const exclude = a as T;
         if(exclude === null || exclude === undefined) return this.random();
         if(this.size === 0) return null;
         if(this.size === 1) return this.first();
-
         const eidx = this.indexOf(exclude);
         // 该元素根本不在数组中!
         if(eidx === -1) return this.random();
-
         // 把下标向上偏移
         let index = Mathf.random(0, this.size - 2);
         if(index >= eidx){
@@ -1026,20 +1037,25 @@ export class Seq<T>{
         return true;
     }
 
-    toString(): string{
-        if(this.size === 0) return "[]";
-        const items = this.items;
-        let buffer = "[";
-        buffer += String(items[0]);
-        for(let i = 1; i < this.size; i++){
-            buffer += ", ";
-            buffer += String(items[i]);
+    toString(): string;
+    toString(separator: string, stringifier: Func<T, string>): string;
+    toString(separator: string): string;
+    toString(separator?: string, stringifier?: Func<T, string>): string{
+        if(separator === undefined){
+            if(this.size === 0) return "[]";
+            const items = this.items;
+            let buffer = "[";
+            buffer += String(items[0]);
+            for(let i = 1; i < this.size; i++){
+                buffer += ", ";
+                buffer += String(items[i]);
+            }
+            buffer += "]";
+            return buffer;
         }
-        buffer += "]";
-        return buffer;
-    }
-
-    toString(separator: string, stringifier: Func<T, string>): string{
+        if(stringifier === undefined){
+            stringifier = String;
+        }
         if(this.size === 0) return "";
         const items = this.items;
         let buffer = stringifier(items[0]);
@@ -1048,10 +1064,6 @@ export class Seq<T>{
             buffer += stringifier(items[i]);
         }
         return buffer;
-    }
-
-    toString(separator: string): string{
-        return this.toString(separator, String);
     }
 
     /**

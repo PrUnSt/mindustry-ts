@@ -8,7 +8,7 @@ import {Seq} from './Seq';
  * 同时按插入顺序在 {@link Seq} 中保存 key 的 {@link ObjectMap}.
  */
 export class OrderedMap<K, V> extends ObjectMap<K, V>{
-    private readonly keyList: Seq<K>;
+    readonly keyList: Seq<K>;
 
     static of<K, V>(...values: unknown[]): OrderedMap<K, V>{
         const map = new OrderedMap<K, V>();
@@ -69,13 +69,20 @@ export class OrderedMap<K, V> extends ObjectMap<K, V>{
         return null;
     }
 
-    putAll(map: OrderedMap<K, V>): void{
-        this.ensureCapacity(map.size);
-        const keys = map.keyList.items;
-        for(let i = 0, n = map.keyList.size; i < n; i++){
-            const key = keys[i];
-            this.put(key, map.get(key) as V);
+    putAll(...values: unknown[]): void;
+    putAll(map: OrderedMap<K, V>): void;
+    putAll(...args: any[]): void{
+        if(args.length === 1 && args[0] instanceof OrderedMap){
+            const map = args[0] as OrderedMap<K, V>;
+            this.ensureCapacity(map.size);
+            const keys = map.keyList.items;
+            for(let i = 0, n = map.keyList.size; i < n; i++){
+                const key = keys[i];
+                this.put(key, map.get(key) as V);
+            }
+            return;
         }
+        (super.putAll as (...a: any[]) => void)(...args);
     }
 
     remove(key: K): V | null{
@@ -109,12 +116,14 @@ export class OrderedMap<K, V> extends ObjectMap<K, V>{
         return true;
     }
 
-    clear(maximumCapacity: number): void{
-        this.keyList.clear();
-        super.clear(maximumCapacity);
-    }
-
-    clear(): void{
+    clear(maximumCapacity: number): void;
+    clear(): void;
+    clear(maximumCapacity?: number): void{
+        if(maximumCapacity !== undefined){
+            this.keyList.clear();
+            super.clear(maximumCapacity);
+            return;
+        }
         this.keyList.clear();
         super.clear();
     }
@@ -135,16 +144,18 @@ export class OrderedMap<K, V> extends ObjectMap<K, V>{
             this.entries1 = new OrderedMapEntries<K, V>(this);
             this.entries2 = new OrderedMapEntries<K, V>(this);
         }
-        if(!this.entries1.valid){
-            this.entries1.reset();
-            this.entries1.valid = true;
-            this.entries2.valid = false;
-            return this.entries1;
+        const entries1 = this.entries1!;
+        const entries2 = this.entries2!;
+        if(!entries1.valid){
+            entries1.reset();
+            entries1.valid = true;
+            entries2.valid = false;
+            return entries1;
         }
-        this.entries2.reset();
-        this.entries2.valid = true;
-        this.entries1.valid = false;
-        return this.entries2;
+        entries2.reset();
+        entries2.valid = true;
+        entries1.valid = false;
+        return entries2;
     }
 
     /**
@@ -155,16 +166,18 @@ export class OrderedMap<K, V> extends ObjectMap<K, V>{
             this.values1 = new OrderedMapValues<V>(this);
             this.values2 = new OrderedMapValues<V>(this);
         }
-        if(!this.values1.valid){
-            this.values1.reset();
-            this.values1.valid = true;
-            this.values2.valid = false;
-            return this.values1;
+        const values1 = this.values1!;
+        const values2 = this.values2!;
+        if(!values1.valid){
+            values1.reset();
+            values1.valid = true;
+            values2.valid = false;
+            return values1;
         }
-        this.values2.reset();
-        this.values2.valid = true;
-        this.values1.valid = false;
-        return this.values2;
+        values2.reset();
+        values2.valid = true;
+        values1.valid = false;
+        return values2;
     }
 
     /**
@@ -175,16 +188,18 @@ export class OrderedMap<K, V> extends ObjectMap<K, V>{
             this.keys1 = new OrderedMapKeys<K>(this);
             this.keys2 = new OrderedMapKeys<K>(this);
         }
-        if(!this.keys1.valid){
-            this.keys1.reset();
-            this.keys1.valid = true;
-            this.keys2.valid = false;
-            return this.keys1;
+        const keys1 = this.keys1!;
+        const keys2 = this.keys2!;
+        if(!keys1.valid){
+            keys1.reset();
+            keys1.valid = true;
+            keys2.valid = false;
+            return keys1;
         }
-        this.keys2.reset();
-        this.keys2.valid = true;
-        this.keys1.valid = false;
-        return this.keys2;
+        keys2.reset();
+        keys2.valid = true;
+        keys1.valid = false;
+        return keys2;
     }
 
     toString(separator: string): string;
@@ -199,10 +214,10 @@ export class OrderedMap<K, V> extends ObjectMap<K, V>{
         for(let i = 0, n = keys.size; i < n; i++){
             const key = keys.get(i);
             if(i > 0) buffer += separator;
-            buffer += String(key === this ? "(this)" : key);
+            buffer += String(key === (this as any) ? "(this)" : key);
             buffer += "=";
             const value = this.get(key);
-            buffer += String(value === this ? "(this)" : value);
+            buffer += String(value === (this as any) ? "(this)" : value);
         }
         if(braces) buffer += "}";
         return buffer;
@@ -273,15 +288,16 @@ export class OrderedMapKeys<K> extends Keys<K>{
         this.currentIndex = -1;
     }
 
-    toSeq(array: Seq<K>): Seq<K>{
+    toSeq(array: Seq<K>): Seq<K>;
+    toSeq(): Seq<K>;
+    toSeq(array?: Seq<K>): Seq<K>{
+        if(array === undefined){
+            array = new Seq<K>(true, this.keys.size - this.nextIndex);
+        }
         array.addAll(this.keys, this.nextIndex, this.keys.size - this.nextIndex);
         this.nextIndex = this.keys.size;
         this.hasNextValue = false;
         return array;
-    }
-
-    toSeq(): Seq<K>{
-        return this.toSeq(new Seq<K>(true, this.keys.size - this.nextIndex));
     }
 }
 
@@ -316,7 +332,12 @@ export class OrderedMapValues<V> extends Values<V>{
         this.currentIndex = -1;
     }
 
-    toSeq(array: Seq<V>): Seq<V>{
+    toSeq(array: Seq<V>): Seq<V>;
+    toSeq(): Seq<V>;
+    toSeq(array?: Seq<V>): Seq<V>{
+        if(array === undefined){
+            array = new Seq<V>(true, this.keys.size - this.nextIndex);
+        }
         const n = this.keys.size;
         array.ensureCapacity(n - this.nextIndex);
         const keys = this.keys.items;
@@ -326,9 +347,5 @@ export class OrderedMapValues<V> extends Values<V>{
         this.nextIndex = n;
         this.hasNextValue = false;
         return array;
-    }
-
-    toSeq(): Seq<V>{
-        return this.toSeq(new Seq<V>(true, this.keys.size - this.nextIndex));
     }
 }

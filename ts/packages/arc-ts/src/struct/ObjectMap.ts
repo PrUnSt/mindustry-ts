@@ -49,20 +49,6 @@ export class ObjectMap<K, V>{
     constructor();
     constructor(initialCapacity: number);
     constructor(initialCapacity: number, loadFactor: number);
-    constructor(initialCapacity: number = 51, loadFactor: number = 0.8){
-        if(loadFactor <= 0 || loadFactor >= 1)
-            throw new Error("loadFactor must be > 0 and < 1: " + loadFactor);
-        this.loadFactor = loadFactor;
-
-        const ts = tableSize(initialCapacity, loadFactor);
-        this.threshold = Math.floor(ts * loadFactor);
-        this.mask = ts - 1;
-        this.shift = 32 + Math.clz32(this.mask);
-
-        this.keyTable = new Array<K | null>(ts);
-        this.valueTable = new Array<V | null>(ts);
-    }
-
     /** 创建与指定 map 相同的新 map. */
     constructor(map: ObjectMap<K, V>);
     constructor(a?: any, b?: any){
@@ -216,7 +202,7 @@ export class ObjectMap<K, V>{
             let val = this.get(key);
             if(val === null || val === undefined){
                 val = defaultValueOrSupplier();
-                this.put(key, val);
+                this.put(key, val as V);
             }
             return val;
         }
@@ -415,20 +401,20 @@ export class ObjectMap<K, V>{
         while(i-- > 0){
             const key = keyTable[i];
             if(key === null) continue;
-            buffer += String(key === this ? "(this)" : key);
+            buffer += String(key === (this as any) ? "(this)" : key);
             buffer += "=";
             const value = valueTable[i];
-            buffer += String(value === this ? "(this)" : value);
+            buffer += String(value === (this as any) ? "(this)" : value);
             break;
         }
         while(i-- > 0){
             const key = keyTable[i];
             if(key === null) continue;
             buffer += separator;
-            buffer += String(key === this ? "(this)" : key);
+            buffer += String(key === (this as any) ? "(this)" : key);
             buffer += "=";
             const value = valueTable[i];
-            buffer += String(value === this ? "(this)" : value);
+            buffer += String(value === (this as any) ? "(this)" : value);
         }
         if(braces) buffer += "}";
         return buffer;
@@ -625,12 +611,12 @@ export class Values<V> extends MapIterator<unknown, V>{
     }
 
     /** @return 包含剩余值的新数组. */
-    toSeq(): Seq<V>{
-        return this.toSeq(new Seq<V>(true, this.map.size));
-    }
-
-    /** 将剩余值添加到指定数组. */
-    toSeq(array: Seq<V>): Seq<V>{
+    toSeq(): Seq<V>;
+    toSeq(array: Seq<V>): Seq<V>;
+    toSeq(array?: Seq<V>): Seq<V>{
+        if(array === undefined){
+            array = new Seq<V>(true, this.map.size);
+        }
         while(this.hasNextValue)
             array.add(this.next() as V);
         return array;
@@ -656,12 +642,12 @@ export class Keys<K> extends MapIterator<K, unknown>{
     }
 
     /** @return 包含剩余 key 的新数组. */
-    toSeq(): Seq<K>{
-        return this.toSeq(new Seq<K>(true, this.map.size));
-    }
-
-    /** 将剩余 key 添加到数组. */
-    toSeq(array: Seq<K>): Seq<K>{
+    toSeq(): Seq<K>;
+    toSeq(array: Seq<K>): Seq<K>;
+    toSeq(array?: Seq<K>): Seq<K>{
+        if(array === undefined){
+            array = new Seq<K>(true, this.map.size);
+        }
         while(this.hasNextValue)
             array.add(this.next());
         return array;
