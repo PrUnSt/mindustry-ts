@@ -438,7 +438,7 @@ export class Seq<T>{
     add(array: Seq<T>): Seq<T>;
     add(array: T[]): Seq<T>;
     add(...args: any[]): Seq<T>{
-        const items = this.items;
+        let items = this.items;
         if(args.length === 1){
             const a = args[0];
             if(a instanceof Seq){
@@ -447,23 +447,23 @@ export class Seq<T>{
             if(Array.isArray(a)){
                 return this.addAll(a, 0, a.length);
             }
-            if(this.size === items.length) this.resize(Math.max(8, Math.floor(this.size * 1.75)));
+            if(this.size === items.length) items = this.resize(Math.max(8, Math.floor(this.size * 1.75)));
             items[this.size++] = a;
             return this;
         }
         if(args.length === 2){
-            if(this.size + 1 >= items.length) this.resize(Math.max(8, Math.floor(this.size * 1.75)));
+            if(this.size + 1 >= items.length) items = this.resize(Math.max(8, Math.floor(this.size * 1.75)));
             items[this.size] = args[0];
             items[this.size + 1] = args[1];
             this.size += 2;
         }else if(args.length === 3){
-            if(this.size + 2 >= items.length) this.resize(Math.max(8, Math.floor(this.size * 1.75)));
+            if(this.size + 2 >= items.length) items = this.resize(Math.max(8, Math.floor(this.size * 1.75)));
             items[this.size] = args[0];
             items[this.size + 1] = args[1];
             items[this.size + 2] = args[2];
             this.size += 3;
         }else{
-            if(this.size + 3 >= items.length) this.resize(Math.max(8, Math.floor(this.size * 1.8))); // 1.75 在 size=5 时不够
+            if(this.size + 3 >= items.length) items = this.resize(Math.max(8, Math.floor(this.size * 1.8))); // 1.75 在 size=5 时不够
             items[this.size] = args[0];
             items[this.size + 1] = args[1];
             items[this.size + 2] = args[2];
@@ -512,6 +512,7 @@ export class Seq<T>{
     set(arrayOrIndex: any, value?: T): void{
         if(arguments.length === 2){
             const index = arrayOrIndex as number;
+            if(index < 0) throw new Error("index can't be < 0: " + index);
             if(index >= this.size) throw new Error("index can't be >= size: " + index + " >= " + this.size);
             this.items[index] = value!;
             return;
@@ -532,7 +533,8 @@ export class Seq<T>{
     }
 
     get(index: number): T{
-        if(index >= this.size) throw new Error("index can't be >= size: " + index + " >= " + this.size);
+        if(index < 0) throw new Error("index can't be < 0: " + index);
+            if(index >= this.size) throw new Error("index can't be >= size: " + index + " >= " + this.size);
         return this.items[index];
     }
 
@@ -649,6 +651,7 @@ export class Seq<T>{
     remove(valueOrIndex: any, identity: boolean = false): any{
         if(typeof valueOrIndex === 'number'){
             const index = valueOrIndex;
+            if(index < 0) throw new Error("index can't be < 0: " + index);
             if(index >= this.size) throw new Error("index can't be >= size: " + index + " >= " + this.size);
             const items = this.items;
             const value = items[index];

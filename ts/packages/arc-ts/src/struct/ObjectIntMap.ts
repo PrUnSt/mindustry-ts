@@ -67,14 +67,14 @@ export class ObjectIntMap<K>{
         const h = BigInt.asIntN(64, BigInt(hashOf(item) | 0));
         const prod = h * 0x9e3779b97f4a7c15n;
         const shifted = BigInt.asUintN(64, prod) >> BigInt(this.shift & 63);
-        return Number(shifted & 0xffffffffn) | 0;
+        return (Number(shifted & 0xffffffffn) | 0) & this.mask;
     }
 
     /** 若 key 已存在返回其索引, 否则返回下一个空索引的 -(index + 1). */
     protected locateKey(key: K): number{
         if(key === null || key === undefined) throw new Error("key cannot be null.");
         const keyTable = this.keyTable;
-        for(let i = this.place(key); ; i = i + 1 & this.mask){
+        for(let i = this.place(key); ; i = (i + 1) & this.mask){
             const other = keyTable[i];
             if(other === null) return -(i + 1); // 有空位
             if(equalsOf(other, key)) return i; // 找到相同 key
@@ -191,7 +191,7 @@ export class ObjectIntMap<K>{
         const valueTable = this.valueTable;
         const oldValue = valueTable[i];
         const mask = this.mask;
-        let next = i + 1 & mask;
+        let next = (i + 1) & mask;
         let k: K | null;
         while((k = keyTable[next]) !== null){
             const placement = this.place(k);
@@ -200,7 +200,7 @@ export class ObjectIntMap<K>{
                 valueTable[i] = valueTable[next];
                 i = next;
             }
-            next = next + 1 & mask;
+            next = (next + 1) & mask;
         }
         keyTable[i] = null;
         this.size--;
@@ -482,7 +482,7 @@ export class MapIterator<K>{
         const keyTable = this.map.keyTable;
         const valueTable = this.map.valueTable;
         const mask = this.map.mask;
-        let next = i + 1 & mask;
+        let next = (i + 1) & mask;
         let key: K | null;
         while((key = keyTable[next]) !== null){
             const placement = this.map.place(key);
@@ -491,7 +491,7 @@ export class MapIterator<K>{
                 valueTable[i] = valueTable[next];
                 i = next;
             }
-            next = next + 1 & mask;
+            next = (next + 1) & mask;
         }
         keyTable[i] = null;
         this.map.size--;

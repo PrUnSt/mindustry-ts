@@ -68,13 +68,13 @@ export class IntSet{
         const h = BigInt.asIntN(64, BigInt(item | 0));
         const prod = h * 0x9e3779b97f4a7c15n;
         const shifted = BigInt.asUintN(64, prod) >> BigInt(this.shift & 63);
-        return Number(shifted & 0xffffffffn) | 0;
+        return (Number(shifted & 0xffffffffn) | 0) & this.mask;
     }
 
     /** 若 key 已存在返回其索引, 否则返回下一个空索引的 -(index + 1). */
     private locateKey(key: number): number{
         const keyTable = this.keyTable;
-        for(let i = this.place(key); ; i = i + 1 & this.mask){
+        for(let i = this.place(key); ; i = (i + 1) & this.mask){
             const other = keyTable[i];
             if(other === 0) return -(i + 1); // 有空位
             if(other === key) return i; // 找到相同 key
@@ -161,7 +161,7 @@ export class IntSet{
         if(i < 0) return false;
         const keyTable = this.keyTable;
         const mask = this.mask;
-        let next = i + 1 & mask;
+        let next = (i + 1) & mask;
         let k: number;
         while((k = keyTable[next]) !== 0){
             const placement = this.place(k);
@@ -169,7 +169,7 @@ export class IntSet{
                 keyTable[i] = k;
                 i = next;
             }
-            next = next + 1 & mask;
+            next = (next + 1) & mask;
         }
         keyTable[i] = 0;
         this.size--;
@@ -378,7 +378,7 @@ export class IntSetIterator{
         }else{
             const keyTable = this.set.keyTable;
             const mask = this.set.mask;
-            let next = i + 1 & mask;
+            let next = (i + 1) & mask;
             let key: number;
             while((key = keyTable[next]) !== 0){
                 const placement = this.set.place(key);
@@ -386,7 +386,7 @@ export class IntSetIterator{
                     keyTable[i] = key;
                     i = next;
                 }
-                next = next + 1 & mask;
+                next = (next + 1) & mask;
             }
             keyTable[i] = 0;
             if(i !== this.currentIndex) --this.nextIndex;
