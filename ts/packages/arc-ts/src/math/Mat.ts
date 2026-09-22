@@ -188,16 +188,16 @@ export class Mat{
             return this.setToRotation(a, Mathf.cosDeg(b!), Mathf.sinDeg(b!));
         }
         const val = this.val;
-        const oc = 1.0 - b;
-        val[Mat.M00] = oc * a.x * a.x + b;
+        const oc = 1.0 - b!;
+        val[Mat.M00] = oc * a.x * a.x + b!;
         val[Mat.M10] = oc * a.x * a.y - a.z * c;
         val[Mat.M20] = oc * a.z * a.x + a.y * c;
         val[Mat.M01] = oc * a.x * a.y + a.z * c;
-        val[Mat.M11] = oc * a.y * a.y + b;
+        val[Mat.M11] = oc * a.y * a.y + b!;
         val[Mat.M21] = oc * a.y * a.z - a.x * c;
         val[Mat.M02] = oc * a.z * a.x - a.y * c;
         val[Mat.M12] = oc * a.y * a.z + a.x * c;
-        val[Mat.M22] = oc * a.z * a.z + b;
+        val[Mat.M22] = oc * a.z * a.z + b!;
         return this;
     }
 

@@ -234,11 +234,14 @@ export class Mathf{
         return d >= 1 || Mathf.rand.nextFloat() < d;
     }
 
+    /** Returns a random number between 0.0 (inclusive) and 1.0 (exclusive). */
+    static random(): number;
     /** Returns a random number between 0 (inclusive) and the specified value (inclusive). */
     static random(range: number): number;
     /** Returns a random number between start (inclusive) and end (inclusive). */
     static random(start: number, end: number): number;
-    static random(start: number, end?: number): number{
+    static random(start?: number, end?: number): number{
+        if(start === undefined) return Mathf.rand.nextFloat();
         if(end === undefined){
             return Number.isInteger(start) ? Mathf.rand.nextInt(start + 1) : Mathf.rand.nextFloat() * start;
         }
@@ -249,19 +252,14 @@ export class Mathf{
     }
 
     /** Returns a random boolean value. */
-    static randomBoolean(): boolean{
-        return Mathf.rand.nextBoolean();
-    }
-
+    static randomBoolean(): boolean;
     /** Returns true if a random value between 0 and 1 is less than the specified value. */
-    static randomBoolean(chance: number): boolean{
-        return Mathf.random() < chance;
+    static randomBoolean(chance: number): boolean;
+    static randomBoolean(chance?: number): boolean{
+        return chance === undefined ? Mathf.rand.nextBoolean() : Mathf.random() < chance;
     }
 
-    /** Returns random number between 0.0 (inclusive) and 1.0 (exclusive). */
-    static random(): number{
-        return Mathf.rand.nextFloat();
-    }
+    
 
     /** Returns -1 or 1, randomly. */
     static randomSign(): number{
@@ -432,12 +430,10 @@ export class Mathf{
      * Returns the closest integer to the specified float. This method will only properly round floats from -(2^14) to
      * (Float.MAX_VALUE - 2^14).
      */
-    static round(value: number): number{
-        return Math.trunc(value + BIG_ENOUGH_ROUND) - BIG_ENOUGH_INT;
-    }
-
-    static round(value: number, step: number): number{
-        return Math.trunc(value / step) * step;
+    static round(value: number): number;
+    static round(value: number, step: number): number;
+    static round(value: number, step?: number): number{
+        return step === undefined ? (Math.trunc(value + BIG_ENOUGH_ROUND) - BIG_ENOUGH_INT) : (Math.trunc(value / step) * step);
     }
 
     /** Returns the closest integer to the specified float. This method will only properly round floats that are positive. */
@@ -543,21 +539,19 @@ export class Mathf{
         return x1 * x2 + y1 * y2;
     }
 
-    static dst(x1: number, y1: number): number{
-        return Math.sqrt(x1 * x1 + y1 * y1);
-    }
-
-    static dst2(x1: number, y1: number): number{
-        return x1 * x1 + y1 * y1;
-    }
-
-    static dst(x1: number, y1: number, x2: number, y2: number): number{
+    static dst(x1: number, y1: number): number;
+    static dst(x1: number, y1: number, x2: number, y2: number): number;
+    static dst(x1: number, y1: number, x2?: number, y2?: number): number{
+        if(x2 === undefined || y2 === undefined) return Math.sqrt(x1 * x1 + y1 * y1);
         const xd = x2 - x1;
         const yd = y2 - y1;
         return Math.sqrt(xd * xd + yd * yd);
     }
 
-    static dst2(x1: number, y1: number, x2: number, y2: number): number{
+    static dst2(x1: number, y1: number): number;
+    static dst2(x1: number, y1: number, x2: number, y2: number): number;
+    static dst2(x1: number, y1: number, x2?: number, y2?: number): number{
+        if(x2 === undefined || y2 === undefined) return x1 * x1 + y1 * y1;
         const xd = x2 - x1;
         const yd = y2 - y1;
         return xd * xd + yd * yd;
@@ -568,12 +562,15 @@ export class Mathf{
         return Math.abs(x1 - x2) + Math.abs(y1 - y2);
     }
 
-    static arrive(pos: Position, target: Position, curVel: Vec2, radius: number, tolerance: number, speed: number, smoothTime: number): Vec2{
-        return Mathf.arrive(pos.getX(), pos.getY(), target.getX(), target.getY(), curVel, radius, tolerance, speed, smoothTime);
-    }
-
-    //TODO kind of a mess
-    static arrive(x: number, y: number, destX: number, destY: number, curVel: Vec2, radius: number, tolerance: number, speed: number, accel: number): Vec2{
+    static arrive(pos: Position, target: Position, curVel: Vec2, radius: number, tolerance: number, speed: number, smoothTime: number): Vec2;
+    static arrive(x: number, y: number, destX: number, destY: number, curVel: Vec2, radius: number, tolerance: number, speed: number, accel: number): Vec2;
+    static arrive(a: Position | number, b: Position | number, c: number | Vec2, d: number, e: Vec2 | number, f: number, g: number, h?: number, i?: number): Vec2{
+        if(typeof a !== "number"){
+            // 7-arg form: (pos, target, curVel, radius, tolerance, speed, smoothTime)
+            return Mathf.arrive((a as Position).getX(), (a as Position).getY(), (b as Position).getX(), (b as Position).getY(), c as Vec2, d, e as number, f, g);
+        }
+        // 9-arg form: (x, y, destX, destY, curVel, radius, tolerance, speed, accel)
+        const x = a, y = b as number, destX = c as number, destY = d, curVel = e as Vec2, radius = f, tolerance = g, speed = h!, accel = i!;
         const toTarget = v1.set(destX, destY).sub(x, y);
         const distance = toTarget.len();
 
@@ -585,12 +582,14 @@ export class Mathf{
     }
 
     /** @return whether dst(x1, y1, x2, y2) < dst */
-    static within(x1: number, y1: number, x2: number, y2: number, dst: number): boolean{
-        return Mathf.dst2(x1, y1, x2, y2) < dst * dst;
-    }
-
+    static within(x1: number, y1: number, x2: number, y2: number, dst: number): boolean;
     /** @return whether dst(x, y, 0, 0) < dst */
-    static within(x1: number, y1: number, dst: number): boolean{
-        return (x1 * x1 + y1 * y1) < dst * dst;
+    static within(x1: number, y1: number, dst: number): boolean;
+    static within(x1: number, y1: number, x2?: number, y2?: number, dst?: number): boolean{
+        if(dst === undefined){
+            const d = x2!;
+            return (x1 * x1 + y1 * y1) < d * d;
+        }
+        return Mathf.dst2(x1, y1, x2!, y2!) < dst * dst;
     }
 }

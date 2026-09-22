@@ -5,7 +5,7 @@
 export {Mathf} from './Mathf';
 export {Rand} from './Rand';
 export {Angles} from './Angles';
-export type {Floatc2, ParticleConsumer} from './Angles';
+
 export {Interp} from './Interp';
 export {WindowedMean} from './WindowedMean';
 export {Scaling} from './Scaling';
@@ -25,7 +25,7 @@ export type {Vector} from './geom/Vector';
 export type {Shape2D} from './geom/Shape2D';
 export {Intersector, MinimumTranslationVector} from './geom/Intersector';
 export {QuadTree} from './geom/QuadTree';
-export type {Boolf, Cons} from './geom/QuadTree';
+
 export type {Path} from './geom/Path';
 export {Bezier} from './geom/Bezier';
 export {CatmullRomSpline} from './geom/CatmullRomSpline';

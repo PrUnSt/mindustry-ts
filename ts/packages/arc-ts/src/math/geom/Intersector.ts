@@ -554,7 +554,7 @@ export class Intersector{
      * {@link intersectSegmentRectangle(float, float, float, float, Rect)}
      */
     static intersectSegmentRectangle(start: Vec2, end: Vec2, rect: Rect): boolean;
-    static intersectSegmentRectangle(a: Vec2 | number, b: Vec2 | number, c: Vec2 | number, d?: Vec2 | number | Rect, e?: number | Rect, f?: number, g?: number, h?: number): boolean{
+    static intersectSegmentRectangle(a: Vec2 | number, b: Vec2 | number, c: Vec2 | number | Rect, d?: Vec2 | number | Rect, e?: number | Rect, f?: number, g?: number, h?: number): boolean{
         if(typeof a === 'number'){
             if(typeof d === 'number'){
                 const rectX = d, rectY = e as number, rectW = f!, rectH = g!;
