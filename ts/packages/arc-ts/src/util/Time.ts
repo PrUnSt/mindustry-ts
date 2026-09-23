@@ -1,46 +1,18 @@
 // 源: arc-core/src/arc/util/Time.java
-
+//
+// 迁移说明:
+//  - 原文件的「内联 Core 存根」与「setTimeout 版 Task/Timer」已删除 (TS-1 / TS-3):
+//    delta 取样点改为真实的 ../Core, 延时任务改为 util/Timer 的帧驱动实现。
+//  - 保留时间基准量全部由 util/Time 提供, math 层不再另有一份 Time (见 math/Time.ts 已删除)。
+import { Core } from "../Core";
 import { Floatp } from "./func/Floatp";
 import { Pools } from "./Pools";
 import { Poolable } from "./Pool";
+import { Timer } from "./Timer";
+import type { Task } from "./Timer";
 
 /** 对应 java.lang.Runnable。 */
 export type Runnable = () => void;
-
-/** 最小本地 Core 替代（默认 60fps），TODO: 迁移到 <Core.graphics> 统一实现 */
-const Core = {
-  graphics: {
-    getDeltaTime(): number{
-      return 1 / 60;
-    }
-  }
-};
-
-/** 最小本地 Timer 替代（setTimeout），TODO: 迁移到 <util/Timer> 统一实现 */
-export class Task{
-  cancelled = false;
-  private handle: ReturnType<typeof setTimeout> | null = null;
-
-  schedule(runnable: Runnable, delaySeconds: number): void{
-    this.handle = setTimeout(() => {
-      if(this.cancelled) return;
-      runnable();
-    }, delaySeconds * 1000);
-  }
-
-  cancel(): void{
-    this.cancelled = true;
-    if(this.handle !== null) clearTimeout(this.handle);
-  }
-}
-
-const Timer = {
-  schedule(r: Runnable, delaySeconds: number): Task{
-    const task = new Task();
-    task.schedule(r, delaySeconds);
-    return task;
-  }
-};
 
 /** Time.DelayRun（对应 Java 嵌套静态类）。 */
 export class DelayRun implements Poolable{
@@ -73,6 +45,8 @@ export class Time{
   private static runs: DelayRun[] = [];
   private static removal: DelayRun[] = [];
   private static marks: number[] = [];
+  // 对齐 arc/util/Time.java:26: delta = min(graphics.getDeltaTime() * 60, 3)。
+  // headless 下 Core.graphics 是 MockGraphics, getDeltaTime() 固定 1/60, 故 delta 恒为 1。
   private static deltaimpl: Floatp = () => Math.min(Core.graphics.getDeltaTime() * 60, 3);
 
   /** 对应 Java 嵌套类 Time.DelayRun。 */
@@ -96,6 +70,7 @@ export class Time{
 
   /** Runs a task with a delay of several ticks. Unless the application is closed, this task will always complete. */
   static runTask(delay: number, r: Runnable): Task{
+    // Java: Timer.schedule(r, delay / 60) —— delay 单位是 tick, 换算成秒交给 Timer。
     return Timer.schedule(r, delay / 60);
   }
 
@@ -150,6 +125,9 @@ export class Time{
       const idx = Time.runs.indexOf(r);
       if(idx !== -1) Time.runs.splice(idx, 1);
     }
+
+    // Java 里 Timer 由独立线程驱动; headless 没有真实时间, 改由本帧调用推进 (TS-3)。
+    Timer.update();
   }
 
   static getInternalTime(): number{
@@ -217,5 +195,3 @@ export class Time{
     return Time.millis() - prevTime;
   }
 }
-
-

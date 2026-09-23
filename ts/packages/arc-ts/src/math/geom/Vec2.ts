@@ -5,7 +5,7 @@ import {Angles} from '../Angles';
 import {Interp} from '../Interp';
 import {Mat} from '../Mat';
 import {Rand} from '../Rand';
-import {Time} from '../Time';
+import {Time} from '../../util/Time';
 import {Position} from './Position';
 import {Vector} from './Vector';
 import {Vec3} from './Vec3';

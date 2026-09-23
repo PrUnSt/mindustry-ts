@@ -1,5 +1,6 @@
 // 源: arc-core/src/arc/math/*.java 与 arc-core/src/arc/math/geom/*.java (arc.math 包统一导出)
-// 注意: 本包另含最小本地 Time / ArcRuntimeException (不在此导出, 避免与 arc.util 重复)。
+// 注意: 本包另含 ArcRuntimeException (不在此导出, 避免与 arc.util 重复)。
+// 时间基准只有一处: arc.math 一律引用 ../util/Time (TS-1, 原 math/Time.ts 存根已删除)。
 
 // ---- arc.math ----
 export {Mathf} from './Mathf';

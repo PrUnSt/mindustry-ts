@@ -3,7 +3,7 @@
 // Java 的 int/long 与 float/double 重载在 TS 中无法区分, 按整数/非整数分派:
 // 整数参数走 int/long 语义 (如 random(int) 返回整数), 非整数走 float 语义。详见 VERIFY.md。
 import {Rand} from './Rand';
-import {Time} from './Time';
+import {Time} from '../util/Time';
 import {Vec2} from './geom/Vec2';
 import {Position} from './geom/Position';
 
