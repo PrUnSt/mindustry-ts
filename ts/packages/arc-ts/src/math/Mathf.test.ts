@@ -66,7 +66,10 @@ describe('Mathf.floor / ceil / round', () => {
         expect(Mathf.ceil(0)).toBe(0);
         expect(Mathf.ceil(-0.5)).toBe(0);
         expect(Mathf.ceilPositive(2.1)).toBe(3);
-        expect(Mathf.ceilPositive(2.0)).toBe(3); // libGDX-style: trunc(2.0 + 0.9999999)
+        // 依据 Mathf.java:35 `private static final double CEIL = 0.9999999;`（注意是 double，不是 libGDX 的 float）
+        // 与 Mathf.java:492-494 `(int)(value + CEIL)`：2.0 + 0.9999999 = 2.9999999 → (int) == 2。
+        // 只有用 float32 常量时 2.0f+0.9999999f 才会进位到 3.0f；Arc 的 Java 基准返回 2。
+        expect(Mathf.ceilPositive(2.0)).toBe(2);
     });
     it('rounds', () => {
         expect(Mathf.round(2.5)).toBe(3);
@@ -79,7 +82,9 @@ describe('Mathf.floor / ceil / round', () => {
     it('rounds to step', () => {
         expect(Mathf.round(7, 5)).toBe(5);
         expect(Mathf.round(10, 5)).toBe(10);
-        expect(Mathf.round(13, 5)).toBe(15);
+        // Mathf.java:504-514：round(value, step) 一律 `(int)(value / step) * step`，即“向零截断到 step 的整数倍”，
+        // 没有“就近取整”语义；13 / 5 == 2 → 2 * 5 == 10。
+        expect(Mathf.round(13, 5)).toBe(10);
         expect(Mathf.round(3, 2)).toBe(2);
     });
     it('handles NaN', () => {
@@ -123,7 +128,9 @@ describe('Mathf.sin / cos lookup table', () => {
 
 describe('Mathf.atan2 approximation', () => {
     it('returns exact values on axes', () => {
-        expect(Mathf.atan2(1, 0)).toBeCloseTo(0, 6);
+        // Mathf.java:140-141 自述该 atan2 近似 "Average error is 1.057E-6 radians; maximum error is 1.922E-6"；
+        // Mathf.java:129-138 的 atn(0) 返回 ≈1.6634e-6 而非精确 0，故 5e-7 容差对本实现（对 Java 亦然）不可达。
+        expect(Mathf.atan2(1, 0)).toBeCloseTo(0, 5);
         expect(Mathf.atan2(0, 1)).toBeCloseTo(PI / 2, 6);
         expect(Mathf.atan2(-1, 0)).toBeCloseTo(PI, 4);
         expect(Mathf.atan2(0, -1)).toBeCloseTo(-PI / 2, 6);
@@ -142,16 +149,22 @@ describe('Mathf.atan2 approximation', () => {
 
 describe('Mathf.angle helpers', () => {
     it('angle wraps to [0, 360)', () => {
-        expect(Mathf.angle(1, 0)).toBeCloseTo(0, 5);
+        // angle() 在 Mathf.java:98-102 里把 atan2 结果直接乘 radDeg，把 atan2 的 ≈1.6634e-6 rad 固有误差
+        // 放大成 ≈9.53e-5 度（误差上界见 Mathf.java:140-141），故 0 附近容差必须放宽到 5e-4。
+        expect(Mathf.angle(1, 0)).toBeCloseTo(0, 3);
         expect(Mathf.angle(0, 1)).toBe(90);
-        expect(Mathf.angle(-1, 0)).toBeCloseTo(180, 4);
+        expect(Mathf.angle(-1, 0)).toBeCloseTo(180, 3);
         expect(Mathf.angle(0, -1)).toBe(270);
         expect(Mathf.angle(0, 0)).toBe(0);
     });
     it('angleExact uses real atan2', () => {
-        expect(Mathf.angleExact(0, 1)).toBe(90);
+        // Mathf.java:104-108 用真 atan2，但 radDeg 基于被截断的常量 PI=3.1415927：float64 下
+        // 90 * (π / 3.1415927) ≈ 89.99999867、180 * (π / 3.1415927) ≈ 179.99999734。
+        // Java 里 `(float)Math.atan2(...)` 截断到 float32 后恰好进位回 90/180；TS 按项目约定保留
+        // float64（更接近真值，不追求字节级一致），故此处放宽为 5 位精度。
+        expect(Mathf.angleExact(0, 1)).toBeCloseTo(90, 5);
         expect(Mathf.angleExact(1, 0)).toBe(0);
-        expect(Mathf.angleExact(-1, 0)).toBe(180);
+        expect(Mathf.angleExact(-1, 0)).toBeCloseTo(180, 5);
     });
     it('wrapAngleAroundZero maps to [-PI, PI]', () => {
         expect(Mathf.wrapAngleAroundZero(0)).toBe(0);
@@ -316,7 +329,9 @@ describe('Mathf.misc', () => {
         expect(Mathf.slerp(350, 10, 0.5)).toBe(0);
         expect(Mathf.slerp(10, 350, 0)).toBe(10);
         expect(Mathf.slerp(10, 350, 1)).toBe(350);
-        expect(Mathf.slerp(0, 180, 0.5)).toBe(90);
+        // Mathf.java:455-458：delta = ((180 - 0 + 360 + 180) % 360) - 180 = -180，
+        // 结果 = (0 + (-180) * 0.5 + 360) % 360 == 270。0↔180 两个方向等长，Java 取负向 delta。
+        expect(Mathf.slerp(0, 180, 0.5)).toBe(270);
     });
     it('power of two helpers', () => {
         expect(Mathf.nextPowerOfTwo(0)).toBe(1);

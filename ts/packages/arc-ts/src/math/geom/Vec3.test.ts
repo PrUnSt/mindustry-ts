@@ -72,7 +72,10 @@ describe('Vec3 arithmetic', () => {
     });
 
     it('angle between vectors', () => {
-        expect(new Vec3(1, 0, 0).angle(new Vec3(0, 1, 0))).toBeCloseTo(90, 8);
+        // Java Vec3.java:355-365: angleRad 用真 Math.acos, angle = angleRad * Mathf.radDeg;
+        // 残余偏差来自 Mathf.java:11 `PI = 3.1415927f` 与 Mathf.java:17 `radiansToDegrees = 180f / PI`
+        // (相对真值 180/π 偏小 ≈1.48E-8), float64 移植下 90 度处偏差 ≈1.33E-6 度 (Java 窄化成 float32 才是 90)。
+        expect(new Vec3(1, 0, 0).angle(new Vec3(0, 1, 0))).toBeCloseTo(90, 4);
         expect(new Vec3(1, 0, 0).angleRad(new Vec3(1, 0, 0))).toBeCloseTo(0, 8);
     });
 

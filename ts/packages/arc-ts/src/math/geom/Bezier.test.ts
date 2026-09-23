@@ -97,10 +97,14 @@ describe('CatmullRomSpline', () => {
         const spline = new CatmullRomSpline<Vec2>(points, false);
         expect(spline.spanCount).toBe(1);
         const out = new Vec2();
+        // 非连续时 span 会偏移 +1: CatmullRomSpline.java:123
+        //   valueAt(out, span, u) => calculate(out, continuous ? span : (span + 1), u, ...)
+        // 且 CatmullRomSpline.java:114-118 的 n = spanCount = 1, t=0/1 都落在 span 0, u 分别为 0/1。
+        // 因此该样条实际覆盖控制点 1 -> 2, 即 [10,0] -> [20,0] (不是 [0,0] -> [10,0])。
         spline.valueAt(out, 0);
-        expect(out.x).toBeCloseTo(0, 8);
-        spline.valueAt(out, 1);
         expect(out.x).toBeCloseTo(10, 8);
+        spline.valueAt(out, 1);
+        expect(out.x).toBeCloseTo(20, 8);
     });
 
     it('static calculate span form', () => {

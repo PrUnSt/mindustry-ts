@@ -4,7 +4,9 @@ import {Vec2} from './geom/Vec2';
 
 describe('Angles.angle', () => {
     it('computes angles of vectors (approx atan2)', () => {
-        expect(Angles.angle(1, 0)).toBeCloseTo(0, 4);
+        // Mathf.atan2 是近似算法 (Java 注释: 平均误差 1.057E-6 弧度 ≈ 6.05E-5 度), atn(0) 返回 ~1.6e-6 弧度,
+        // 乘 radDeg 后约 9.53e-5, 故 0 度处的容差放宽到 3 位 (5e-4)。
+        expect(Angles.angle(1, 0)).toBeCloseTo(0, 3);
         expect(Angles.angle(0, 1)).toBe(90);
         expect(Angles.angle(-1, 0)).toBeCloseTo(180, 3);
         expect(Angles.angle(0, -1)).toBe(270);
@@ -13,9 +15,9 @@ describe('Angles.angle', () => {
 
     it('computes angle between two points', () => {
         expect(Angles.angle(0, 0, 0, 1)).toBe(90);
-        expect(Angles.angle(0, 0, 1, 0)).toBeCloseTo(0, 4);
+        expect(Angles.angle(0, 0, 1, 0)).toBeCloseTo(0, 3);
         expect(Angles.angle(5, 5, 5, 6)).toBe(90);
-        expect(Angles.angle(5, 5, 6, 5)).toBeCloseTo(0, 4);
+        expect(Angles.angle(5, 5, 6, 5)).toBeCloseTo(0, 3);
     });
 
     it('angleRad returns radians', () => {
@@ -42,8 +44,10 @@ describe('Angles.moveToward / clampRange', () => {
         expect(Angles.moveToward(0, 90, 30)).toBe(30);
         expect(Angles.moveToward(90, 0, 30)).toBe(60);
         expect(Angles.moveToward(270, 0, 45)).toBe(315);
-        expect(Angles.moveToward(0, 180, 45)).toBe(45);
-        expect(Angles.moveToward(180, 0, 45)).toBe(135);
+        // 180° 平局: backwardDistance == forwardDistance == 180, `>` 为 false, 按 Java 语义 (Angles.java:43) 走分支
+        expect(Angles.moveToward(0, 180, 45)).toBe(-45);
+        // 180° 平局: `angle > to` 为 true 而距离比较为 false, 不相等故走 else, 按 Java 语义走正方向
+        expect(Angles.moveToward(180, 0, 45)).toBe(225);
     });
 
     it('snaps to target when close enough', () => {

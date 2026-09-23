@@ -118,7 +118,12 @@ describe('Intersector.segment helpers', () => {
     it('intersectSegmentCircle', () => {
         expect(Intersector.intersectSegmentCircle(new Vec2(0, 0), new Vec2(10, 0), new Vec2(5, 3), 16)).toBe(true);
         expect(Intersector.intersectSegmentCircle(new Vec2(0, 0), new Vec2(10, 0), new Vec2(5, 10), 16)).toBe(false);
-        expect(Intersector.intersectSegmentCircle(new Vec2(0, 0), new Vec2(10, 0), new Vec2(12, 0), 16)).toBe(false);
+        // 依据 Intersector.java:313-331: 第 4 参数是 squareRadius(平方半径), 16 即半径 4。
+        // center=(12,0) 时 u >= l 走 Intersector.java:320-321 -> 最近点取 end=(10,0);
+        // x=2, y=0, x*x+y*y=4 <= 16 -> 返回 true, 故不能期望 false。
+        expect(Intersector.intersectSegmentCircle(new Vec2(0, 0), new Vec2(10, 0), new Vec2(12, 0), 16)).toBe(true);
+        // 真正的 "圆心在段外且不相交" 用例: center=(20,0) -> 最近点仍为 end=(10,0), x=10 -> 100 > 16 -> false
+        expect(Intersector.intersectSegmentCircle(new Vec2(0, 0), new Vec2(10, 0), new Vec2(20, 0), 16)).toBe(false);
     });
 
     it('distanceLinePoint', () => {

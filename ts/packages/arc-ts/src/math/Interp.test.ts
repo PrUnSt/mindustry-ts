@@ -124,7 +124,8 @@ describe('Interp.exp / circle', () => {
         expect(Interp.circle.apply(1)).toBe(1);
         expect(Interp.circle.apply(0.25)).toBeCloseTo(0.066987298108, 10);
         expect(Interp.circleIn.apply(0.5)).toBeCloseTo(1 - Math.sqrt(0.75), 10);
-        expect(Interp.circleOut.apply(0.5)).toBeCloseTo(0.5, 10);
+        // Interp.java:68-71：circleOut(a) = sqrt(1 - (a-1)^2)；a=0.5 → sqrt(1 - 0.25) = sqrt(0.75) ≈ 0.8660254
+        expect(Interp.circleOut.apply(0.5)).toBeCloseTo(Math.sqrt(0.75), 10);
     });
 });
 
@@ -145,14 +146,17 @@ describe('Interp.elastic / swing / bounce', () => {
         expect(Interp.elasticOut.apply(0.5)).toBe(0.96875);
     });
     it('swing overshoots', () => {
-        expect(Interp.swing.apply(0)).toBe(0);
+        // Interp.java:342-346：swing(0) 走 a<=0.5 分支，得 a*a*((scale+1)*a - scale)/2 = 0 * (负数) = -0.0f。
+        // Java 与 TS 均返回 -0，而 `toBe` 按 Object.is 区分 -0/+0，故改用数值比较。
+        expect(Interp.swing.apply(0)).toBeCloseTo(0, 10);
         expect(Interp.swing.apply(0.5)).toBe(0.5);
         expect(Interp.swing.apply(1)).toBe(1);
         expect(Interp.swing.apply(0.25)).toBe(-0.125);
         expect(Interp.swing.apply(0.75)).toBe(1.125);
     });
     it('swingIn / swingOut', () => {
-        expect(Interp.swingIn.apply(0)).toBe(0);
+        // Interp.java:374-377：swingIn(0) = 0 * 0 * ((scale+1)*0 - scale) = -0.0f（同为 -0 而非 +0）
+        expect(Interp.swingIn.apply(0)).toBeCloseTo(0, 10);
         expect(Interp.swingIn.apply(1)).toBe(1);
         expect(Interp.swingIn.apply(0.5)).toBe(-0.125);
         expect(Interp.swingOut.apply(0)).toBe(0);
@@ -163,16 +167,22 @@ describe('Interp.elastic / swing / bounce', () => {
         expect(Interp.bounce.apply(0)).toBe(0);
         expect(Interp.bounce.apply(0.5)).toBe(0.5);
         expect(Interp.bounce.apply(1)).toBe(1);
-        expect(Interp.bounce.apply(0.25)).toBeCloseTo(0.093564013841, 8);
-        expect(Interp.bounce.apply(0.75)).toBeCloseTo(0.906435986159, 8);
+        // 按 Interp.java:225-245（Bounce.out / apply）、276-284（BounceOut(4) 配置, widths[0]=0.34*2）、
+        // 300-316（BounceOut.apply）逐字计算：bounce(0.25) = (1 - out(1-0.5))/2、bounce(0.75) = out(0.5)/2 + 0.5，
+        // 其中 out(0.5) = BounceOut.apply(0.5) = 0.74089965…
+        expect(Interp.bounce.apply(0.25)).toBeCloseTo(0.129550173010, 8);
+        expect(Interp.bounce.apply(0.75)).toBeCloseTo(0.870449826990, 8);
     });
     it('bounceIn / bounceOut', () => {
         expect(Interp.bounceIn.apply(0)).toBe(0);
         expect(Interp.bounceIn.apply(1)).toBe(1);
         expect(Interp.bounceOut.apply(0)).toBe(0);
         expect(Interp.bounceOut.apply(1)).toBe(1);
-        expect(Interp.bounceOut.apply(0.5)).toBeCloseTo(0.812878027682, 8);
-        expect(Interp.bounceIn.apply(0.5)).toBeCloseTo(0.187128027682, 8);
+        // Interp.java:300-316：BounceOut(4).apply(0.5) = 0.74089965…
+        // （widths=[0.68,0.34,0.2,0.15], heights=[1,0.26,0.11,0.03]）；
+        // Interp.java:328-331：BounceIn.apply(0.5) = 1 - BounceOut.apply(0.5) = 0.25910034…
+        expect(Interp.bounceOut.apply(0.5)).toBeCloseTo(0.740899653979, 8);
+        expect(Interp.bounceIn.apply(0.5)).toBeCloseTo(0.259100346021, 8);
     });
 });
 

@@ -80,10 +80,13 @@ describe('WindowedMean window access', () => {
         m.add(1);
         m.add(2);
         m.add(3);
-        m.add(4); // window [2,3,4], lastValue=1
-        expect(m.get(0)).toBe(3);
-        expect(m.get(1)).toBe(4);
-        expect(m.get(2)).toBe(2);
+        m.add(4); // values = [4,2,3], lastValue = 1
+        // 依据 WindowedMean.java:33-35: get(index) = values[Mathf.mod(index + lastValue, values.length)]。
+        // lastValue = 1 时 get(0)=values[1]=2, get(1)=values[2]=3, get(2)=values[0]=4,
+        // 与 getWindowValues() 的 oldest->latest 顺序 [2,3,4] 一致 (不是 [3,4,2])。
+        expect(m.get(0)).toBe(2);
+        expect(m.get(1)).toBe(3);
+        expect(m.get(2)).toBe(4);
     });
 });
 

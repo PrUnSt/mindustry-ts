@@ -43,8 +43,14 @@ describe('Point2 operations', () => {
     });
 
     it('rotate in 90-degree steps', () => {
-        expect(new Point2(1, 0).rotate(1)).toMatchObject({x: 0, y: 1});
-        expect(new Point2(1, 0).rotate(2)).toMatchObject({x: -1, y: 0});
+        // 旋转会产生 -0 (x=-y 且 y=0); toMatchObject 用 Object.is 比较, Object.is(-0, +0) 为 false,
+        // 故改用不依赖 Object.is 的数值断言 (JS 中 -0 === 0 为 true)。
+        const p1 = new Point2(1, 0).rotate(1);
+        expect(p1.x).toBeCloseTo(0, 10);
+        expect(p1.y).toBe(1);
+        const p2 = new Point2(1, 0).rotate(2);
+        expect(p2.x).toBe(-1);
+        expect(p2.y).toBeCloseTo(0, 10);
         expect(new Point2(1, 0).rotate(4)).toMatchObject({x: 1, y: 0});
         expect(new Point2(1, 0).rotate(-1)).toMatchObject({x: 0, y: -1});
     });

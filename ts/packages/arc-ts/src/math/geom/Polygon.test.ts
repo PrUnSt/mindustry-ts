@@ -76,6 +76,10 @@ describe('Polygon transforms', () => {
         p.dirty();
         const second = p.getTransformedVertices();
         expect(second[0]).toBe(100);
-        expect(first).not.toBe(second);
+        // 依据 Polygon.java:54-94: getTransformedVertices() 只有在 dirty 为 true 时重算,
+        // 重算时复用内部 field worldVertices (Polygon.java:59-60 仅在长度变化时才 new),
+        // 因此两次调用返回同一个数组引用是 Java 的设计语义 —— 断言应为同一引用。
+        expect(first).toBe(second);
+        expect(first[0]).toBe(100);
     });
 });

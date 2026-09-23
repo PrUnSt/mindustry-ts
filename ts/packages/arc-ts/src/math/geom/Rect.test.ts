@@ -110,8 +110,16 @@ describe('Rect measurements', () => {
         expect(inside.width).toBe(100);
         expect(inside.height).toBe(50);
         const outside = new Rect(0, 0, 100, 100).fitOutside(new Rect(0, 0, 100, 50));
-        expect(outside.width).toBeCloseTo(200, 10);
-        expect(outside.height).toBe(50);
+        // Java Rect.java:437-450 fitOutside: ratio = 100/100 = 1, rect.getAspectRatio() = 100/50 = 2;
+        // `ratio > rect.getAspectRatio()` (1 > 2) 为 false → setSize(rect.width, rect.width / ratio) = (100, 100),
+        // 即用 1:1 的矩形外接 100x50 (原期望 200x50 的宽高比为 4, 与"保持比例"矛盾, Java 下同样不可达)。
+        expect(outside.width).toBe(100);
+        expect(outside.height).toBe(100);
+        // 覆盖 Java Rect.java:440-442 的 `ratio > rect.getAspectRatio()` 分支: ratio=1 > 0.5
+        // → setSize(rect.height * ratio, rect.height) = (200, 200)。
+        const covering = new Rect(0, 0, 100, 100).fitOutside(new Rect(0, 0, 100, 200));
+        expect(covering.width).toBe(200);
+        expect(covering.height).toBe(200);
     });
 
     it('toString / fromString', () => {
