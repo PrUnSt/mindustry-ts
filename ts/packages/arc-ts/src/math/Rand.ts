@@ -5,12 +5,12 @@
 // 但内部 BigInt 状态不受影响 (经访问器读写)。
 const MASK64 = (1n << 64n) - 1n;
 const LONG_MIN = 1n << 63n;
-const NORM_DOUBLE = 1.0 / (1 << 53);
+const NORM_DOUBLE = 1.0 / 2 ** 53;
 const NORM_FLOAT = 1.0 / (1 << 24);
 
-/** 将 JS number 转为有符号 64 位 BigInt 的无符号表示. */
-function toUint64(v: number): bigint{
-    return BigInt.asUintN(64, BigInt(Math.trunc(v)));
+/** 将 JS number / BigInt 转为 64 位 BigInt 的无符号表示. */
+function toUint64(v: number | bigint): bigint{
+    return BigInt.asUintN(64, typeof v === 'bigint' ? v : BigInt(Math.trunc(v)));
 }
 
 export class Rand{
@@ -71,7 +71,7 @@ export class Rand{
         this.s0 = s0;
         s1 ^= (s1 << 23n) & MASK64;
         this.s1 = (s1 ^ s0 ^ (s1 >> 17n) ^ (s0 >> 26n)) & MASK64;
-        return this.s1;
+        return (this.s1 + s0) & MASK64;
     }
 
     /** Returns the next pseudo-random, uniformly distributed {@code int} value. */
@@ -130,8 +130,9 @@ export class Rand{
     /** Sets the internal seed of this generator based on the given {@code long} value. */
     setSeed(seed: number): void{
         const s = seed === 0 ? LONG_MIN : toUint64(seed);
+        // 直接以 BigInt 传递, 避免 64 位哈希结果经 number 往返丢失低位精度.
         const seed0 = Rand.murmurHash3(s);
-        this.setState(Number(BigInt.asIntN(64, seed0)), Number(BigInt.asIntN(64, Rand.murmurHash3(seed0))));
+        this.setState(seed0, Rand.murmurHash3(seed0));
     }
 
     chance(chance: number): boolean{
@@ -148,7 +149,10 @@ export class Rand{
         if(max === undefined){
             return Number.isInteger(min) ? this.nextInt(min + 1) : this.nextFloat() * min;
         }
-        return Number.isInteger(min) && Number.isInteger(max)
+        // Java 用静态重载区分 random(int, int)(含上界) 与 random(float, float)(不含上界);
+        // TS 只有一个 random(min, max), 只能按运行期值分派: 非负整数区间对应 Java 的 int 重载,
+        // 其余(含负下界或小数)对应 float 重载。
+        return Number.isInteger(min) && Number.isInteger(max) && min >= 0
             ? (min >= max ? min : min + this.nextInt(max - min + 1))
             : min + (max - min) * this.nextFloat();
     }
@@ -158,7 +162,7 @@ export class Rand{
      * @param seed0 the first part of the internal state
      * @param seed1 the second part of the internal state
      */
-    setState(seed0: number, seed1: number): void{
+    setState(seed0: number | bigint, seed1: number | bigint): void{
         this.s0 = toUint64(seed0);
         this.s1 = toUint64(seed1);
     }
@@ -167,7 +171,7 @@ export class Rand{
      * Returns the internal seeds to allow state saving.
      * @param seed must be 0 or 1, designating which of the 2 long seeds to return
      */
-    getState(seed: number): number{
-        return seed === 0 ? Number(BigInt.asIntN(64, this.s0)) : Number(BigInt.asIntN(64, this.s1));
+    getState(seed: number): bigint{
+        return seed === 0 ? BigInt.asIntN(64, this.s0) : BigInt.asIntN(64, this.s1);
     }
 }
