@@ -3,3 +3,6 @@ dist/
 *.log
 .arc-src/
 .vitest-cache/
+
+# vitest 在配置文件旁生成的临时文件（Windows 上偶发未清理）
+*.timestamp-*.mjs

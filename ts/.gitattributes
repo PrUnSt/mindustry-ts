@@ -1,0 +1,15 @@
+# ts/ 下的源码统一使用 LF 换行，避免在 Windows 上因 core.autocrlf=true
+# 反复出现 "LF will be replaced by CRLF" 警告与无意义的行尾 diff。
+#
+# 本文件只作用于 ts/ 目录，不影响上游 Java 源码与素材。
+# 若确需全仓统一，请单独评估——对仓库根做 renormalize 会改动数千个上游文件。
+
+*.ts    text eol=lf
+*.tsx   text eol=lf
+*.mts   text eol=lf
+*.cts   text eol=lf
+*.js    text eol=lf
+*.json  text eol=lf
+*.md    text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf

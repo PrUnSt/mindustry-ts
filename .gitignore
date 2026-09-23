@@ -171,3 +171,6 @@ core/assets/logicids.dat
 
 # project files for the sectors
 core/assets-raw/sprites/ui/sectors/*.json
+
+# 本 fork 新增：AI 助手工作区数据（记忆日志等），不入库
+.workbuddy/

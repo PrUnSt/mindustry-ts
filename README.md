@@ -1,3 +1,15 @@
+> ### ⚠️ This is a personal fork, not the official repository
+>
+> Forked from [Anuken/Mindustry](https://github.com/Anuken/Mindustry) at commit `3a54813513`.
+> The only substantive addition is a **Java → TypeScript migration experiment** under
+> [`ts/`](ts/README.md). The upstream Java implementation and assets are unmodified.
+> Licensing: code under **GPLv3** (see [`LICENSE`](LICENSE)); art/music/audio assets under
+> **CC BY-NC-SA (non-commercial)**. Not affiliated with the upstream project.
+>
+> Upstream: https://github.com/Anuken/Mindustry
+
+---
+
 ![Logo](core/assets-raw/sprites/ui/logo.png)
 
 [![Build Status](https://github.com/Anuken/Mindustry/workflows/Tests/badge.svg?event=push)](https://github.com/Anuken/Mindustry/actions)

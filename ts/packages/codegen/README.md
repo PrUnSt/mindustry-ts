@@ -175,7 +175,7 @@ TS 侧扩展点：扫描 `@LogicStatement` 注解类，生成类似 `RemoteProce
 ## 测试
 
 ```sh
-cd D:\zjl\Mindustry\ts
+cd ts
 pnpm --filter @mindustry-ts/codegen test
 # 或：cd packages/codegen && npx vitest run
 ```
