@@ -174,3 +174,7 @@ core/assets-raw/sprites/ui/sectors/*.json
 
 # 本 fork 新增：AI 助手工作区数据（记忆日志等），不入库
 .workbuddy/
+
+# 本 fork 新增：沙箱写入代理在 CWD 留下的 0 字节暂存文件（形如 _tmp_<pid>_<sha1>）。
+# 它们由 agent 运行时的文件系统代理产生，与项目无关，误提交过一次（C6），故显式忽略。
+_tmp_*

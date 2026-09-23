@@ -2,5 +2,11 @@ packages:
   - "packages/*"
   - "apps/*"
   - "tools/*"
+
 allowBuilds:
   esbuild: set this to true or false
+
+# pnpm 11 起，此类设置只从 pnpm-workspace.yaml 读取；
+# 放在 package.json 的 "pnpm" 字段会被忽略并报警告。
+onlyBuiltDependencies:
+  - esbuild

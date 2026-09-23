@@ -6,10 +6,18 @@
   "main": "src/index.ts",
   "types": "src/index.ts",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests"
   },
+  "dependencies": {
+    "@mindustry-ts/arc": "workspace:*",
+    "@mindustry-ts/game": "workspace:*"
+  },
   "devDependencies": {
+    "vite": "^5.4.0",
     "typescript": "^5.6.3",
     "vitest": "^2.1.8"
   }

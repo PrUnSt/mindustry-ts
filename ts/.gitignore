@@ -6,3 +6,6 @@ dist/
 
 # vitest 在配置文件旁生成的临时文件（Windows 上偶发未清理）
 *.timestamp-*.mjs
+
+# codegen 产物：构建时生成，不入库（S0 决策，见 docs）
+packages/mindustry-ts/src/gen/
