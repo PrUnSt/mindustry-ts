@@ -21,7 +21,14 @@ const BIG_ENOUGH_FLOOR = BIG_ENOUGH_INT;
 const CEIL = 0.9999999;
 const BIG_ENOUGH_ROUND = BIG_ENOUGH_INT + 0.5;
 const seedr = new Rand();
-const v1 = new Vec2(), v2 = new Vec2(), v3 = new Vec2();
+// 惰性初始化的共享临时向量 (对应 Java 私有静态 v1/v2/v3): 不能在模块顶层 new Vec2(),
+// 否则 Mathf <-> Vec2 的 ESM 循环依赖会在本模块体执行时因 Vec2 绑定尚未初始化而抛
+// "Vec2 is not a constructor" (Java 中类为惰性加载, 同样的循环无碍)。
+let v1: Vec2 | null = null, v2: Vec2 | null = null, v3: Vec2 | null = null;
+
+function tmp1(): Vec2{ if(v1 === null) v1 = new Vec2(); return v1; }
+function tmp2(): Vec2{ if(v2 === null) v2 = new Vec2(); return v2; }
+function tmp3(): Vec2{ if(v3 === null) v3 = new Vec2(); return v3; }
 
 // 对应 Java static{} 初始化块
 for(let i = 0; i < sinCount; i++){
@@ -571,10 +578,10 @@ export class Mathf{
         }
         // 9-arg form: (x, y, destX, destY, curVel, radius, tolerance, speed, accel)
         const x = a, y = b as number, destX = c as number, destY = d, curVel = e as Vec2, radius = f, tolerance = g, speed = h!, accel = i!;
-        const toTarget = v1.set(destX, destY).sub(x, y);
+        const toTarget = tmp1().set(destX, destY).sub(x, y);
         const distance = toTarget.len();
 
-        if(distance <= tolerance) return v3.setZero();
+        if(distance <= tolerance) return tmp3().setZero();
         let targetSpeed = speed;
         if(distance <= radius) targetSpeed *= distance / radius;
 

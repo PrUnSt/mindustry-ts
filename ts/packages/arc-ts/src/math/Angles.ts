@@ -29,7 +29,14 @@ const Core = {
 };
 
 const rand = new Rand();
-const rv = new Vec2();
+// 惰性初始化的共享临时向量: 不能在模块顶层 new Vec2(), 否则 Vec2 <-> Angles 的 ESM 循环依赖
+// 会在本模块体执行时因 Vec2 绑定尚未初始化而抛 "Vec2 is not a constructor"。
+let rv: Vec2 | null = null;
+
+function scratch(): Vec2{
+    if(rv === null) rv = new Vec2();
+    return rv;
+}
 
 function isFloatc2(v: unknown): v is Floatc2{
     return typeof v === 'object' && v !== null && typeof (v as Floatc2).get === 'function';
@@ -100,14 +107,14 @@ export class Angles{
     static trnsx(angle: number, x: number, y: number): number;
     static trnsx(angle: number, a: number, b?: number): number{
         if(b === undefined) return a * Mathf.cosDeg(angle);
-        return rv.set(a, b).rotate(angle).x;
+        return scratch().set(a, b).rotate(angle).x;
     }
 
     static trnsy(angle: number, len: number): number;
     static trnsy(angle: number, x: number, y: number): number;
     static trnsy(angle: number, a: number, b?: number): number{
         if(b === undefined) return a * Mathf.sinDeg(angle);
-        return rv.set(a, b).rotate(angle).y;
+        return scratch().set(a, b).rotate(angle).y;
     }
 
     // TODO: 依赖 arc.Core (camera/input), 迁移后接入统一实现
@@ -134,8 +141,8 @@ export class Angles{
     static randVectors(seed: number, amount: number, length: number, cons: Floatc2): void{
         rand.setSeed(seed);
         for(let i = 0; i < amount; i++){
-            rv.trns(rand.random(360), length);
-            cons.get(rv.x, rv.y);
+            scratch().trns(rand.random(360), length);
+            cons.get(scratch().x, scratch().y);
         }
     }
 
@@ -155,22 +162,22 @@ export class Angles{
                     if(isFloatc2(f)){
                         const amount = a, length = b, angle = c, range = d, spread = e, cons = f;
                         for(let i = 0; i < amount; i++){
-                            rv.trns(angle + rand.range(range), rand.random(length));
-                            cons.get(rv.x + rand.range(spread), rv.y + rand.range(spread));
+                            scratch().trns(angle + rand.range(range), rand.random(length));
+                            cons.get(scratch().x + rand.range(spread), scratch().y + rand.range(spread));
                         }
                     }else{
                         const fin = a, amount = b, length = c, angle = d, range = e, cons = f as ParticleConsumer;
                         for(let i = 0; i < amount; i++){
-                            rv.trns(angle + rand.range(range), rand.random(length * fin));
-                            cons.accept(rv.x, rv.y, fin * (rand.nextFloat()), 0);
+                            scratch().trns(angle + rand.range(range), rand.random(length * fin));
+                            cons.accept(scratch().x, scratch().y, fin * (rand.nextFloat()), 0);
                         }
                     }
                 }else{
                     // (seed, amount, length, angle, range, Floatc2)
                     const amount = a, length = b, angle = c, range = d, cons = e as Floatc2;
                     for(let i = 0; i < amount; i++){
-                        rv.trns(angle + rand.range(range), rand.random(length));
-                        cons.get(rv.x, rv.y);
+                        scratch().trns(angle + rand.range(range), rand.random(length));
+                        cons.get(scratch().x, scratch().y);
                     }
                 }
             }else{
@@ -178,15 +185,15 @@ export class Angles{
                 if(isFloatc2(d)){
                     const amount = a, minLength = b, length = c, cons = d;
                     for(let i = 0; i < amount; i++){
-                        rv.trns(rand.random(360), minLength + rand.random(length));
-                        cons.get(rv.x, rv.y);
+                        scratch().trns(rand.random(360), minLength + rand.random(length));
+                        cons.get(scratch().x, scratch().y);
                     }
                 }else{
                     const fin = a, amount = b, length = c, cons = d as ParticleConsumer;
                     for(let i = 0; i < amount; i++){
                         const l = rand.nextFloat();
-                        rv.trns(rand.random(360), length * l * fin);
-                        cons.accept(rv.x, rv.y, fin * l, (1 - fin) * l);
+                        scratch().trns(rand.random(360), length * l * fin);
+                        cons.accept(scratch().x, scratch().y, fin * l, (1 - fin) * l);
                     }
                 }
             }
@@ -194,8 +201,8 @@ export class Angles{
             // (seed, amount, length, Floatc2)
             const amount = a, length = b, cons = c as Floatc2;
             for(let i = 0; i < amount; i++){
-                rv.trns(rand.random(360), length);
-                cons.get(rv.x, rv.y);
+                scratch().trns(rand.random(360), length);
+                cons.get(scratch().x, scratch().y);
             }
         }
     }
