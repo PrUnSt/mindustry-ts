@@ -1,181 +1,193 @@
 # @mindustry-ts/codegen
 
-Mindustry Java 注解处理器在 TypeScript 侧的等价物。Java 版用 `mindustry.annotations` 的 `EntityProcess` / `RemoteProcess` / `StructProcess` / `LogicStatementProcessor` 在编译期生成实体、网络与序列化代码；本包用 TypeScript compiler API 在构建期做同样的事，产物由构建管线直接引用（不手写 mixin）。
+Mindustry Java 注解处理器在 TypeScript 侧的等价物。Java 版用 `mindustry.annotations` 的 `EntityProcess` / `RemoteProcess` / `StructProcess` / `LogicStatementProcessor` 在编译期生成代码；本包用 TypeScript compiler API 在构建期做同样的事，产物由构建管线直接引用（不手写 mixin）。
 
 Java 参考实现（只读）：
 - `annotations/src/main/java/mindustry/annotations/entity/EntityProcess.java`
-- `annotations/src/main/java/mindustry/annotations/entity/EntityIO.java`
+- `annotations/src/main/java/mindustry/annotations/impl/StructProcess.java`
+- `core/src/mindustry/entities/GroupDefs.java`
+- `annotations/src/main/resources/classids.properties`
 
-## 现状：最小可用实体代码生成器
+## 范围（S2）
 
-当前实现覆盖 `EntityProcess` 第一轮（round 1）的简化版：扫描带 `@Component()` 装饰器的类，为每个组件生成两份产物：
+已实现：
 
-1. **实体接口**（entity interface）：全部公开字段的属性声明 + 全部公开方法的方法声明。
-2. **合并实体类**（merged entity class）：字段默认值 + 方法实现体，`implements` 该接口——展示最终实体类的生成形状。
+| Java 处理器 | TS 现状 | 产物 |
+| --- | --- | --- |
+| `EntityProcess` round 1（组件接口 + 抽象基类） | ✅ | `<Interface>c.ts`、base 组件的抽象基类 `<Base>.ts` |
+| `EntityProcess` round 2（`@EntityDef` 合并） | ✅ | 合并实体类 `<Name>.ts` |
+| `EntityProcess` round 2（`@GroupDef` 组表） | ✅ | `Groups.ts` + `IndexableEntity__<group>.ts` |
+| `EntityProcess` round 3（class id → 名字映射） | ✅ | `EntityMapping.ts` |
+| `StructProcess`（位打包值类型） | ✅ | `@Struct` 类的 `get`/setter/`bitMask*` |
 
-### 目录结构
+未实现（本阶段有意排除）：
+
+- `RemoteProcess`（`@Remote` → `Call*Packet`）。Java 会为每个远程方法生成 `Call*` 静态类；TS 侧网络层未定型，等运行时包就绪再做。
+- `EntityIO` / `serialize()` / `read()`（存档与网络 revision 机制）。
+- `LogicStatementProcessor`。
+
+## 与 Java 的三处结构性差异
+
+1. **单次运行、两趟发射**。Java 需要三轮注解处理（round 1 生成接口 → round 2 生成实体 → round 3 编译 `EntityMapping`），因为 `TypeElement` 的解析互相依赖。TS 侧 AST 是内存里的普通对象，所以一次 `generate()` 内部按「先接口/基类、后实体」的顺序渲染并写盘即可，不需要多轮。
+2. **组件通过真实符号表解析**。Java 靠 `interfaceToComp` 把接口名尾字符切掉再 `elements.getTypeElement` 反查组件类；TS 侧维护 `Symbols`（`byName` 组件类名 → 模型、`byInterface` 接口名 → 模型、`resolveSupertype`），`PosComp ↔ Posc` 的配对由结构而非查表保证。`nameRule.ts` 里的字符加工函数只用于**断言 Java 规则**和渲染期给名字，不参与解析。
+3. **实体名显式声明 + 派生结果校验**。Java `@EntityDef.value()` 是 `Class[]`，没有名字槽位，所以类名只能由组件名派生（`EntityProcess.java:996-1000`）。TS 装饰器可以携带任意数据，因此写成 `@EntityDef({ name: "MechUnit", components: [Unitc, Mechc] })`，`name` 必填；`deriveEntityName()` 仍完整移植 Java 的四条分支，并在生成时断言 `派生值 === 声明值`。规则从「机制」降级为「受检不变量」——一旦有人改了命名规则而 fixture 没跟上，测试会立刻报错。
+
+## 目录结构
 
 ```
 packages/codegen/
 ├── src/
-│   ├── codegen.ts        # 核心：extract（TS AST -> ComponentModel）+ render（-> 源码文本）
-│   ├── cli.ts            # node 入口：<inputDir> <outputDir>
-│   ├── index.ts          # 包出口
-│   ├── codegen.test.ts   # Vitest：generate() 行为
-│   └── cli.test.ts       # Vitest：CLI 写盘行为
+│   ├── codegen.ts              # collect（AST -> SourceModel）+ generate（编排各生成器）
+│   ├── model.ts                # ComponentModel / EntityDefModel 等中间模型
+│   ├── config.ts               # 命名规则、10 个 Group 表、classids 读取
+│   ├── cli.ts                  # node 入口：<inputDir> <outputDir> [--check]
+│   ├── index.ts                # 包出口
+│   ├── entity/
+│   │   ├── nameRule.ts         # Java 命名规则的纯函数移植
+│   │   ├── entityGen.ts        # 符号表 + 接口/基类/合并实体渲染 + 方法合并
+│   │   ├── groupGen.ts         # Groups.ts 与 IndexableEntity__*.ts
+│   │   ├── entityMappingGen.ts # class id 分配与 EntityMapping.ts
+│   │   ├── nameRule.test.ts
+│   │   ├── entityGen.test.ts
+│   │   └── groupGen.test.ts
+│   └── struct/
+│       ├── structGen.ts        # 位打包结构体
+│       └── structGen.test.ts
 ├── fixtures/
-│   ├── decorators.ts     # 装饰器占位定义（运行时 no-op）
-│   └── sample.comp.ts    # 示例组件 Posc
+│   ├── decorators.ts           # 装饰器占位定义（运行时 no-op）
+│   ├── entity/
+│   │   ├── EntityComp.def.ts  PosComp.def.ts  HealthComp.def.ts
+│   │   ├── TeamComp.def.ts    UnitComp.def.ts MechComp.def.ts
+│   │   ├── BuildingComp.def.ts PosTeam.def.ts UnitTypes.def.ts
+│   │   └── gen-classnames.txt  # ground truth：v160.5 jar 里 mindustry/gen/* 的类名
+│   └── struct/Tile.def.ts
 └── README.md
 ```
 
-### API
+## 输入写法
+
+组件源文件后缀 `.def.ts`（`config.sourceExtension`），用 `fixtures/decorators.ts` 里的占位装饰器：
+
+```ts
+import { Component, EntityDef, Replace, SyncField } from "../../decorators.js";
+import { Entityc } from "./EntityComp.def.js";
+
+@Component()
+export class PosComp {
+  x = 0;
+  y = 0;
+  dst(other: Posc): number { /* ... */ }
+}
+
+@Component({ base: true, genInterface: false })
+@EntityDef({ name: "Building", components: [Buildingc], excludeGroups: ["all"] })
+export class BuildingComp { /* ... */ }
+
+// 非类型元素上的 @EntityDef：走字段分支（对应 UnitTypes.java:34-93）
+@EntityDef({ name: "MechUnit", components: [Unitc, Mechc] })
+export const mace = 0;
+```
+
+支持的装饰器：
+
+| 装饰器 | 语义 | Java 对应 |
+| --- | --- | --- |
+| `@Component()` | 标记组件类 | `Annotations.Component` |
+| `@Component({ base, genInterface })` | `base` → 生成抽象基类；`genInterface: false` → 不生成接口 | 同上 |
+| `@EntityDef({ name, components, legacy, pooled, serialize, genio, isFinal, excludeGroups })` | 声明合并实体 | `Annotations.EntityDef` |
+| `@GroupDef(value, exclude, spatial, mapping, collide, update)` | 声明组（生成器目前用 `config.ts` 里的表） | `Annotations.GroupDef` |
+| `@SyncField` | 同步字段（本阶段仅记录） | `Annotations.SyncField` |
+| `@Replace` | 合并时替换同签名方法 | `Annotations.Replace` |
+| `@MethodPriority(n)` | 合并优先级，数字大者胜 | `Annotations.MethodPriority` |
+| `@ReadOnly` / `@Import` | 字段/导入控制 | 同名注解 |
+| `@Struct` / `@StructField(bits)` | 位打包值类型 | 同名注解 |
+
+## 命名规则
+
+全部来自 `EntityProcess.java:915-935,996-1000`，实现在 `src/entity/nameRule.ts`：
+
+| 规则 | 结果 | Java 行号 |
+| --- | --- | --- |
+| `interfaceNameFor` | `PosComp` → `Posc` | `:915-921` |
+| `baseNameFor` | `PosComp` → `Pos` | `:924-928` |
+| `interfaceToCompName` | `Posc` → `PosComp`（仅用于断言，不参与解析） | `:931-935` |
+| `createName` | `{Unitc, Mechc}` → 排序去 `Comp` 拼接 → `UnitMech` | `:996-1000` |
+| `deriveEntityName`（类型元素） | `PosTeamDef` → 去 `Def`/`Comp` → `PosTeam` | `:294-301` |
+| `deriveEntityName`（字段元素） | 走 `createName`（`UnitTypes.java:37` 的 `nova`） | `:294-301` |
+| `Entity` 后缀 | 派生名与 base 类同名时追加，得到 `Unit`（基类）/`UnitEntity`（实体） | `:303-305` |
+| `Legacy` 中缀 | `legacy: true` → `name + "Legacy" + capitalize(elementName)` → `MechUnitLegacyNova` | `:307-309` |
+
+接口名保留尾 `c`（`Posc`/`Unitc`/`Buildingc`）是**刻意**的：Java 侧有 502 处 `*c` 调用点，改名收益为零、迁移成本极高。组件源类名则统一成 `PosComp` 形式，作为「Java 类 ↔ TS 类」的溯源锚点。
+
+## 组表
+
+`config.ts` 的 `DEFAULT_GROUPS` 逐行对应 `GroupDefs.java:6-17`，共 10 个组：
+
+| 组 | 基类型 | 备注 |
+| --- | --- | --- |
+| `all` | `Entityc` | `exclude = [Unitc, PowerGraphUpdaterc, Bulletc, EffectStatec, Playerc]`（`GroupDefs.java:7`） |
+| `effect` | `EffectStatec` | |
+| `player` | `Player` | `mapping` |
+| `bullet` | `Bulletc` | `spatial`, `collide` |
+| `unit` | `Unit` | `spatial`, `mapping` |
+| `build` | `Building` | |
+| `sync` | `Syncc` | `mapping` |
+| `draw` | `Drawc` | |
+| `weather` | `WeatherStatec` | |
+| `powerGraph` | `PowerGraphUpdaterc` | |
+
+基类型 = `repr.base() ? baseName(repr) : interfaceName(repr)`（`EntityProcess.java:251`），所以 base 组件解析到抽象类（`Unit`/`Building`/`Player`），其余解析到接口。全部名称已对 v160.5 jar 校验（`groupGen.test.ts`）。
+
+## API
 
 ```ts
 import { generate } from "@mindustry-ts/codegen";
 
-// files: 组件源文件（绝对或相对路径）
-const outputs: Map<string, string> = generate(["fixtures/sample.comp.ts"]);
-// => Map { "Pos.gen.ts" => "..." }
+const outputs: Map<string, string> = generate(["fixtures/entity"]);
+// => Map { "Posc.ts" => "...", "Building.ts" => "...", "MechUnit.ts" => ..., "Groups.ts" => ..., "EntityMapping.ts" => ... }
 ```
 
-`generate()` 内部只做三件事：`ts.createSourceFile` 解析每个文件 -> 提取 `@Component()` 类的字段/方法模型 -> 渲染为源码文本。
+`generate()` 一次跑完全部生成器：`collectModels` 解析 AST → 建符号表 → `resolveEntities`（组件闭包、base 判定、派生名断言）→ 按「接口/基类 → 实体 → 组 → 映射」写盘。
 
-### CLI
+## CLI
 
 ```sh
-pnpm build                              # tsc -> dist/
-node dist/cli.js <inputDir> <outputDir> # 递归扫描 <inputDir> 下 *.comp.ts，把 *.gen.ts 写到 <outputDir>
+pnpm --filter @mindustry-ts/codegen build
+node dist/cli.js <inputDir> <outputDir>          # 递归扫描 *.def.ts，写生成结果
+node dist/cli.js <inputDir> <outputDir> --check  # 只比较不写盘；有漂移退出 1
 ```
 
-## 命名约定
+`--check` 在内存里生成后与 `outputDir` 逐文件比对，任何缺失或内容不一致都返回 1，用于 CI 防止生成物过期。
 
-- 组件类名以 `c` 结尾：`Posc`
-- 实体接口名 = 去掉尾 `c`：`Pos`
-- 合并实体类名 = 接口名 + `Entity`：`PosEntity`
-- 输出文件名 = 接口名 + `.gen.ts`：`Pos.gen.ts`
+## ground truth
 
-生成文件带固定头注释（`// Generated by @mindustry-ts/codegen. Do not edit.` 与 `/* eslint-disable */`）。
+`fixtures/entity/gen-classnames.txt` 是从官方 `server-release.jar`（v160.5）用纯 Python `zipfile` 抽出的 `mindustry/gen/` 下全部 **305** 个类名。本地源码为 `v160.5-9-g0c1acdf537`，但
 
-## 生成形状示例
-
-输入 `fixtures/sample.comp.ts`：
-
-```ts
-@Component()
-export class Posc {
-  x: number = 0;
-  y: number = 0;
-
-  dst(other: Posc): number {
-    const dx = this.x - other.x;
-    const dy = this.y - other.y;
-    return Math.sqrt(dx * dx + dy * dy);
-  }
-}
+```
+git diff --stat v160.5..HEAD -- annotations/ core/src/mindustry/entities/ core/src/mindustry/resources/
 ```
 
-输出 `Pos.gen.ts`：
+输出为空：v160.5 之后虽然还有若干提交（`Fixed #12697` 等）以及全部 `ts/` 迁移提交，但都没有触及 `annotations/`、`core/src/mindustry/entities/`、`core/src/mindustry/resources/`。因此 jar 里的类名对本地源码是权威的。每个 fixture 的派生名都已逐条对照该清单。
 
-```ts
-export interface Pos {
-  x: number;
-  y: number;
+## 与 Java 的偏差（已知，均有原因）
 
-  dst(other: Pos): number;
-}
-
-export class PosEntity implements Pos {
-  x: number = 0;
-  y: number = 0;
-
-  dst(other: Pos): number {
-    const dx = this.x - other.x;
-    const dy = this.y - other.y;
-    return Math.sqrt(dx * dx + dy * dy);
-  }
-}
-```
-
-两个关键设计决策：
-- **自包含类型改写**：签名里引用组件自身类型 `Posc` 会被改写为生成的接口名 `Pos`，输出文件不需要 import 组件源文件。引用*其它*类型时原样复制（需要 import 时见扩展点 5）。
-- **方法体原样复制**：对应 Java 的 `methodBlocks`（`EntityProcess` 把方法体存下来贴进实体类）。TS 侧 `this` 语义一致，无需 Java 的 `self` 替换；仅做统一缩进重排。
-
-## 与 Java 处理的对应
-
-| Java 处理器 | TS 现状 | 说明 |
-| --- | --- | --- |
-| `EntityProcess` round 1（组件接口） | ✅ 简化版 | `@Component` -> 接口 + 合并类 |
-| `EntityProcess` round 2（`@EntityDef` 多组件合并） | ⬜ 路线图 | 见下 |
-| `RemoteProcess`（`Call` 生成） | ⬜ 路线图 | 见下 |
-| `StructProcess`（二进制序列化） | ⬜ 路线图 | 见下 |
-| `LogicStatementProcessor` | ⬜ 路线图 | 见下 |
-
-## 路线图：如何继续镜像 Java
-
-### 1. `@EntityDef` 多组件合并（EntityProcess round 2）
-
-Java 中 `@EntityDef(value = {Posc.class, Healthc.class})` 生成合并实体类：字段取各组件非私有非静态字段（重复字段报错），方法取全部组件方法，并生成 `toString()`、`serialize()`、Group 注册与 `@SyncField` 的 target/last 三值字段。
-
-TS 侧扩展点：
-- `fixtures/decorators.ts` 已留 `EntityDef` 占位；生成器读取其参数（组件接口/类名列表）。
-- 合并类 `class XxxEntity implements Pos, Health`，字段按组件顺序铺平。
-- 组件依赖：组件类 `extends` 另一组件 -> 接口 `extends` 其接口（对应 Java `getDependencies` + `addSuperinterface`）。
-- 命名冲突：与 base 类同名时 Java 追加 `Entity` 后缀（`name += "Entity"`）。
-- 字段冲突：Java `err(...)` 报错；TS 侧同样报错。
-- 字段注解：`@ReadOnly`（生成 protected）、`@SyncField`（float 三值 + interpolate）、`@NoSerialize`、`@Import`、`@Replace`。
-- 组：`@GroupDef` -> 实体类静态注册进 group。
-
-### 2. `RemoteProcess`（Call 生成）
-
-Java 为 `@Remote` 方法生成 `Call*` 静态类（如 `CallBlocks`）：每个方法一个静态方法，把参数序列化后交给网络层；读侧生成 `read*` 反序列化并分发到真实实现。
-
-TS 侧扩展点：
-- 扫描 `@Remote(called = ..., unreliable = ...)` 修饰的方法。
-- 生成 `export class CallXxx`：签名保留，参数按类型分派到 `Writes`/`Reads`（`packages/arc-ts/src/util/io`）。
-- 类型分派表即 `EntityIO.io(...)` 的分支：primitive、`@Struct` 类、`Content`（按 id）、数组/`Seq`、nullable。
-- 网络抽象（`NetConnection` 等）放运行时包，生成代码只做编解码。
-
-### 3. `StructProcess`（二进制序列化）
-
-Java `@Struct` 类生成 `StructWriter`/`StructReader`，固定字节布局，字段按声明顺序读写。
-
-TS 侧扩展点：
-- 扫描 `@Struct` 类，生成 `readXxx(data: Uint8Array)` / `writeXxx(value): Uint8Array`（或 `DataView`）。
-- 布局：按 Java size 推导（boolean=1B、byte=1B、short=2B、int/float=4B、long=8B），`@StructField` 可覆盖。
-- 参考 `EntityIO.java` 的 revision 机制：实体读写 `short REV` + 按版本分支，向前兼容存档/网络帧。
-
-### 4. `LogicStatementProcessor`
-
-Java 为逻辑指令生成 `L*` 语句类：接口 + `read/write` + `build` + 显示名。
-
-TS 侧扩展点：扫描 `@LogicStatement` 注解类，生成类似 `RemoteProcess` 的编解码 + 指令注册表。
-
-## 扩展点清单（按优先级）
-
-1. 组件选项解析：`Component({ base, genInterface })` 读对象字面量参数。
-2. 组件继承：`Posc extends Otherc` -> 接口 `extends` 对应接口。
-3. `@EntityDef` 合并（路线图 1）。
-4. 字段/方法注解：`@ReadOnly`、`@SyncField`、`@NoSerialize`、`@Replace`。
-5. 外部类型引用：目前类型文本原样复制；若引用其它文件类型，需按 `path.relative` 生成相对 import，或把公共类型收进运行时包。
-6. 序列化（`EntityIO` 语义）与 `@Struct`。
-7. CLI：多输入目录、watch 模式、保留目录结构、配置文件、增量写盘（只重写变化的输出）。
-
-## 已知限制（当前版本有意为之）
-
-- 只识别 `@Component()` / `@Component`；`base`/`genInterface` 选项尚未解析。
-- 静态与私有成员不进入接口/合并类（Java 会把 static 字段放进实体类——见扩展点 1/4）。
-- 抽象方法（无方法体）不进入合并类。
-- getter/setter、重载方法、计算成员名不处理。
-- 字段类型引用外部类型时原样复制，不自动加 import。
-- 组件类名不以 `c` 结尾时不剥离，直接用作接口名。
-- 合并类不生成 `toString()`/`serialize()`（Java 实体类的默认行为）。
-- 未做 `@EntityDef` 去重：同名接口在不同文件出现时，后者覆盖前者（Map.set 语义）。
+| 偏差 | 原因 |
+| --- | --- |
+| `genInterface: false` 时**不生成**接口；Java 会生成一个空接口 | 空接口在 TS 里还要求实现类声明 `implements`，徒增噪音；S2 验收明确要求「不产接口」 |
+| 方法重载被显式拒绝（`assertNoOverloads` 抛错），而不是静默合并 | TS 的类只能有一个同名实现，Java 的 `descString()` 按签名分别合并。静默生成会产出不能编译的文件，宁可直接报错 |
+| 基类上的组索引成员取**所有子类组的并集**；Java 取第一个子类的列表 | Java 该处依赖子类扫描顺序，属于实现细节；并集是更安全的超集 |
+| 不再自动注入 `EntityComp`（Java 的 `@BaseComponent` 隐式注入） | 显式写出 `implements Entityc` 更符合 TS 显式风格；fixture 已照此书写 |
+| 不生成 `Buildingc`（Java 总会生成这个空接口） | 与 `genInterface: false` 同源 |
+| `@Remote` / `Call*Packet` 不生成 | 本阶段范围外 |
+| `serialize()` / `read()` / `toString()` 未生成 | 依赖 `EntityIO`，属于后续阶段 |
+| `EntityGroup` 从 `@mindustry-ts/mindustry-ts` 入口 import，而该模块尚不存在 | S3 范围；从入口 re-export 后无需改生成器（见 `config.entityGroupImport`） |
 
 ## 测试
 
 ```sh
 cd ts
-pnpm --filter @mindustry-ts/codegen test
-# 或：cd packages/codegen && npx vitest run
+TEMP='D:\zjl\Mindustry\.workbuddy\tmp' TMP='D:\zjl\Mindustry\.workbuddy\tmp' \
+  pnpm --filter @mindustry-ts/codegen test
 ```
+
+`TEMP`/`TMP` 必须指到工作区内的目录：vitest 会把 SSR 缓存写到 `os.tmpdir()`，若该路径被沙箱拒绝，**对应的测试文件会被静默丢弃**（没有 FAIL，只是文件数变少）。所以验收必须同时核对「文件数 + 用例数 + 退出码」，不能只看 "Tests passed"。
