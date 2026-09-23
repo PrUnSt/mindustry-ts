@@ -19,7 +19,9 @@ const fixturesRoot = path.join(packageRoot, "fixtures");
 const entityFixtures = path.join(fixturesRoot, "entity");
 const groundTruth = fs
   .readFileSync(path.join(entityFixtures, "gen-classnames.txt"), "utf8")
-  .split("\n")
+  // 必须容忍 CRLF（同 groupGen.test.ts 的理由：否则 groundTruth 会变成空数组）。
+  .split(/\r?\n/)
+  .map((line) => line.trim())
   .filter((line) => line.endsWith(".class"))
   .map((line) => line.replace("mindustry/gen/", "").replace(/\.class$/, ""));
 

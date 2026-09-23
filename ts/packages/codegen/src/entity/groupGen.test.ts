@@ -10,7 +10,11 @@ const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 const groundTruth = new Set(
   fs
     .readFileSync(path.join(packageRoot, "fixtures", "entity", "gen-classnames.txt"), "utf8")
-    .split("\n")
+    // 必须容忍 CRLF：Windows 上 autocrlf 可能把该文件检出为 CRLF，
+    // 若逐行不 trim，line.endsWith(".class") 会全部落空、groundTruth 变成空集。
+    // （根 .gitattributes 已对 *.txt 声明 eol=lf，这里是第二道防线。）
+    .split(/\r?\n/)
+    .map((line) => line.trim())
     .filter((line) => line.endsWith(".class"))
     .map((line) => line.replace("mindustry/gen/", "").replace(/\.class$/, "")),
 );

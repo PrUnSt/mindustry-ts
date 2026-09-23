@@ -13,3 +13,8 @@
 *.md    text eol=lf
 *.yml   text eol=lf
 *.yaml  text eol=lf
+
+# 数据/清单类文件也强制 LF：测试逐行解析它们（gen-classnames.txt 等），
+# 若被 autocrlf 检出为 CRLF，line.endsWith(".class") 会全部落空。
+*.txt   text eol=lf
+*.csv   text eol=lf
