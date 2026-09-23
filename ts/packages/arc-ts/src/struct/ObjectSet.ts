@@ -47,7 +47,7 @@ export class ObjectSet<T>{
         this.mask = ts - 1;
         this.shift = 32 + Math.clz32(this.mask);
 
-        this.keyTable = new Array<T | null>(ts);
+        this.keyTable = new Array<T | null>(ts).fill(null);
     }
 
     static with<T>(...array: T[]): ObjectSet<T>;
@@ -304,7 +304,7 @@ export class ObjectSet<T>{
         this.shift = 32 + Math.clz32(this.mask);
         const oldKeyTable = this.keyTable;
 
-        this.keyTable = new Array<T | null>(newSize);
+        this.keyTable = new Array<T | null>(newSize).fill(null);
 
         if(this.size > 0){
             for(let i = 0; i < oldCapacity; i++){

@@ -54,14 +54,22 @@ export class ObjectMap<K, V>{
     constructor(a?: any, b?: any){
         if(a instanceof ObjectMap){
             const map = a as ObjectMap<K, V>;
-            this.loadFactor = map.loadFactor;
-            const ts = Math.floor(map.keyTable.length * map.loadFactor);
-            this.loadFactor = map.loadFactor;
-            this.threshold = Math.floor(ts * map.loadFactor);
+            // Java: this((int)(map.keyTable.length * map.loadFactor), map.loadFactor) —— 委托给
+            // (capacity, loadFactor) 构造器, 由 tableSize() 把容量抬到下一个 2 的幂, 从而保证 mask = 2^n-1.
+            const loadFactor = map.loadFactor;
+            const capacity = Math.floor(map.keyTable.length * loadFactor);
+            const ts = tableSize(capacity, loadFactor);
+            this.loadFactor = loadFactor;
+            this.threshold = Math.floor(ts * loadFactor);
             this.mask = ts - 1;
             this.shift = 32 + Math.clz32(this.mask);
-            this.keyTable = map.keyTable.slice();
-            this.valueTable = map.valueTable.slice();
+            // Java: 按 ts 分配数组后 System.arraycopy(map.keyTable/valueTable, 0, ..., map.keyTable.length).
+            this.keyTable = new Array<K | null>(ts).fill(null);
+            this.valueTable = new Array<V | null>(ts).fill(null);
+            for(let i = 0, n = map.keyTable.length; i < n; i++){
+                this.keyTable[i] = map.keyTable[i];
+                this.valueTable[i] = map.valueTable[i];
+            }
             this.size = map.size;
             return;
         }
@@ -74,8 +82,8 @@ export class ObjectMap<K, V>{
         this.threshold = Math.floor(ts * loadFactor);
         this.mask = ts - 1;
         this.shift = 32 + Math.clz32(this.mask);
-        this.keyTable = new Array<K | null>(ts);
-        this.valueTable = new Array<V | null>(ts);
+        this.keyTable = new Array<K | null>(ts).fill(null);
+        this.valueTable = new Array<V | null>(ts).fill(null);
     }
 
     /**
@@ -340,8 +348,8 @@ export class ObjectMap<K, V>{
         const oldKeyTable = this.keyTable;
         const oldValueTable = this.valueTable;
 
-        this.keyTable = new Array<K | null>(newSize);
-        this.valueTable = new Array<V | null>(newSize);
+        this.keyTable = new Array<K | null>(newSize).fill(null);
+        this.valueTable = new Array<V | null>(newSize).fill(null);
 
         if(this.size > 0){
             for(let i = 0; i < oldCapacity; i++){

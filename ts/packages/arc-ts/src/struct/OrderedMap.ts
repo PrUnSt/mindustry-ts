@@ -86,7 +86,9 @@ export class OrderedMap<K, V> extends ObjectMap<K, V>{
     }
 
     remove(key: K): V | null{
-        this.keyList.remove(key, false);
+        // Java: keys.remove(key, false) —— Seq.remove(T, boolean) 按值删除 (Seq.java:668).
+        // TS 的 Seq.remove 重载被塌缩, K 为数值时会被误判为索引, 故改用无歧义的 removeValue.
+        this.keyList.removeValue(key, false);
         return super.remove(key);
     }
 

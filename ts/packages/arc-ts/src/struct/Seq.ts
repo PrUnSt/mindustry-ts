@@ -640,6 +640,33 @@ export class Seq<T>{
         return -1;
     }
 
+    /**
+     * 按值移除第一个实例, 永不把参数当作索引.
+     * 对应 Java 的 {@code remove(T value, boolean identity)} 重载 (Seq.java:668);
+     * 应用于 {@code OrderedSet<number>} 这类 T 为数值的场景, 避免与 {@link #remove(int)} 混淆.
+     * @param identity 若为 true 使用 === 比较, 否则使用 .equals() 语义比较.
+     * @return 是否找到并移除了元素.
+     */
+    removeValue(value: T, identity: boolean = false): boolean{
+        const items = this.items;
+        if(identity || value === null || value === undefined){
+            for(let i = 0, n = this.size; i < n; i++){
+                if(items[i] === value){
+                    this.remove(i);
+                    return true;
+                }
+            }
+        }else{
+            for(let i = 0, n = this.size; i < n; i++){
+                if(equalsOf(value, items[i])){
+                    this.remove(i);
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     /** 不使用 identity 移除一个值. */
     remove(value: T): boolean;
     /** 按谓词移除单个值. @return 是否找到并移除了元素. */
@@ -674,24 +701,7 @@ export class Seq<T>{
             }
             return false;
         }
-        const value = valueOrIndex;
-        const items = this.items;
-        if(identity || value === null || value === undefined){
-            for(let i = 0, n = this.size; i < n; i++){
-                if(items[i] === value){
-                    this.remove(i);
-                    return true;
-                }
-            }
-        }else{
-            for(let i = 0, n = this.size; i < n; i++){
-                if(equalsOf(value, items[i])){
-                    this.remove(i);
-                    return true;
-                }
-            }
-        }
-        return false;
+        return this.removeValue(valueOrIndex as T, identity);
     }
 
     /** 移除 [start, end] 区间 (含端点) 内的元素. */

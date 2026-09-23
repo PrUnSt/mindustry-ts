@@ -56,7 +56,7 @@ export class ObjectIntMap<K>{
         this.threshold = Math.floor(ts * loadFactor);
         this.mask = ts - 1;
         this.shift = 32 + Math.clz32(this.mask);
-        this.keyTable = new Array<K | null>(ts);
+        this.keyTable = new Array<K | null>(ts).fill(null);
         this.valueTable = new Array<number>(ts).fill(0);
     }
 
@@ -286,7 +286,7 @@ export class ObjectIntMap<K>{
         const oldKeyTable = this.keyTable;
         const oldValueTable = this.valueTable;
 
-        this.keyTable = new Array<K | null>(newSize);
+        this.keyTable = new Array<K | null>(newSize).fill(null);
         this.valueTable = new Array<number>(newSize).fill(0);
 
         if(this.size > 0){

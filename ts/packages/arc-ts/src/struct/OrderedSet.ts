@@ -75,7 +75,9 @@ export class OrderedSet<T> extends ObjectSet<T>{
 
     remove(key: T): boolean{
         if(!super.remove(key)) return false;
-        this.items.remove(key, false);
+        // Java: items.remove(key, false) —— Seq.remove(T, boolean) 按值删除 (Seq.java:668).
+        // TS 的 Seq.remove 重载被塌缩, 数值会被误判为索引, 故改用无歧义的 removeValue.
+        this.items.removeValue(key, false);
         return true;
     }
 
