@@ -300,6 +300,11 @@ export class QuadTree<T extends QuadTree.QuadTreeObject>{
      */
     intersect(x: number, y: number, width: number, height: number, out: Boolf<T>): boolean;
     /**
+     * Processes objects that may intersect the given rectangle. Returning true will break out of the function.
+     * <p>This will never result in false positives.
+     */
+    intersect(rect: Rect, out: Boolf<T>): boolean;
+    /**
      * Processes objects that may intersect the given rectangle.
      * <p>This will never result in false positives.
      */
@@ -313,7 +318,7 @@ export class QuadTree<T extends QuadTree.QuadTreeObject>{
      * Fills the out parameter with any objects that may intersect the given rectangle.
      */
     intersect(x: number, y: number, width: number, height: number, out: Seq<T>): void;
-    intersect(a: number | Rect, b: number | Cons<T> | Seq<T> | Rect, c?: number, d?: number, e?: number | Cons<T> | Seq<T>): void | boolean{
+    intersect(a: number | Rect, b: number | Cons<T> | Boolf<T> | Seq<T> | Rect, c?: number, d?: number, e?: number | Cons<T> | Boolf<T> | Seq<T>): void | boolean{
         if(typeof a === 'number'){
             const x = a, y = b as number, width = c!, height = d!;
             if(e instanceof Seq){
@@ -322,23 +327,24 @@ export class QuadTree<T extends QuadTree.QuadTreeObject>{
             }
             return this.intersectPred(x, y, width, height, e as Cons<T> | Boolf<T>);
         }
-        const second = b as Cons<T> | Seq<T> | Rect;
+        const second = b as Cons<T> | Boolf<T> | Seq<T> | Rect;
         if(second instanceof Rect){
-            this.intersectPred(a.x, a.y, a.width, a.height, second as unknown as Cons<T>);
+            return this.intersectPred(a.x, a.y, a.width, a.height, second as unknown as Cons<T>);
         }else if(second instanceof Seq){
             this.intersectSeq(a.x, a.y, a.width, a.height, second);
-        }else{
-            this.intersectPred(a.x, a.y, a.width, a.height, second as Cons<T>);
+            return;
         }
+        return this.intersectPred(a.x, a.y, a.width, a.height, second as Cons<T> | Boolf<T>);
     }
 
     /** 谓词遍历: 处理可能相交的对象; 当 out.get 返回 true 时提前退出并返回 true (Boolf 语义). */
     private intersectPred(x: number, y: number, width: number, height: number, out: Cons<T> | Boolf<T>): boolean{
         if(!this.leaf){
-            if(this.topLeft!.bounds.overlaps(x, y, width, height) && this.intersectPred(x, y, width, height, out)) return true;
-            if(this.topRight!.bounds.overlaps(x, y, width, height) && this.intersectPred(x, y, width, height, out)) return true;
-            if(this.botLeft!.bounds.overlaps(x, y, width, height) && this.intersectPred(x, y, width, height, out)) return true;
-            if(this.botRight!.bounds.overlaps(x, y, width, height) && this.intersectPred(x, y, width, height, out)) return true;
+            // 对应 QuadTree.java:262-265: 递归进入的是子节点 (topLeft.intersect(...)), 不是自身
+            if(this.topLeft!.bounds.overlaps(x, y, width, height) && this.topLeft!.intersectPred(x, y, width, height, out)) return true;
+            if(this.topRight!.bounds.overlaps(x, y, width, height) && this.topRight!.intersectPred(x, y, width, height, out)) return true;
+            if(this.botLeft!.bounds.overlaps(x, y, width, height) && this.botLeft!.intersectPred(x, y, width, height, out)) return true;
+            if(this.botRight!.bounds.overlaps(x, y, width, height) && this.botRight!.intersectPred(x, y, width, height, out)) return true;
         }
 
         const objects = this.objects;
@@ -356,10 +362,11 @@ export class QuadTree<T extends QuadTree.QuadTreeObject>{
     /** 收集遍历: 把所有可能相交的对象加入 out. */
     private intersectSeq(x: number, y: number, width: number, height: number, out: Seq<T>): void{
         if(!this.leaf){
-            if(this.topLeft!.bounds.overlaps(x, y, width, height)) this.intersectSeq(x, y, width, height, out);
-            if(this.topRight!.bounds.overlaps(x, y, width, height)) this.intersectSeq(x, y, width, height, out);
-            if(this.botLeft!.bounds.overlaps(x, y, width, height)) this.intersectSeq(x, y, width, height, out);
-            if(this.botRight!.bounds.overlaps(x, y, width, height)) this.intersectSeq(x, y, width, height, out);
+            // 对应 QuadTree.java:352-356: 递归进入的是子节点 (topLeft.intersect(...)), 不是自身
+            if(this.topLeft!.bounds.overlaps(x, y, width, height)) this.topLeft!.intersectSeq(x, y, width, height, out);
+            if(this.topRight!.bounds.overlaps(x, y, width, height)) this.topRight!.intersectSeq(x, y, width, height, out);
+            if(this.botLeft!.bounds.overlaps(x, y, width, height)) this.botLeft!.intersectSeq(x, y, width, height, out);
+            if(this.botRight!.bounds.overlaps(x, y, width, height)) this.botRight!.intersectSeq(x, y, width, height, out);
         }
 
         const objects = this.objects;

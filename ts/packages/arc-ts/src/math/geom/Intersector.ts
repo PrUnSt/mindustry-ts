@@ -362,7 +362,8 @@ export class Intersector{
     static distanceSegmentPoint(start: Vec2, end: Vec2, point: Vec2): number;
     static distanceSegmentPoint(a: Vec2 | number, b: Vec2 | number, c: Vec2 | number, d?: number, e?: number, f?: number): number{
         if(typeof a === 'number'){
-            return Intersector.nearestSegmentPoint(a, b as number, c as number, d!, e!, f!, Intersector.v2tmp).dst(f!, e!);
+            // Intersector.java:274 -> nearestSegmentPoint(...).dst(pointX, pointY)
+            return Intersector.nearestSegmentPoint(a, b as number, c as number, d!, e!, f!, Intersector.v2tmp).dst(e!, f!);
         }
         return Intersector.nearestSegmentPoint(a, b as Vec2, c as Vec2, Intersector.v2tmp).dst(c as Vec2);
     }
@@ -556,33 +557,37 @@ export class Intersector{
     static intersectSegmentRectangle(start: Vec2, end: Vec2, rect: Rect): boolean;
     static intersectSegmentRectangle(a: Vec2 | number, b: Vec2 | number, c: Vec2 | number | Rect, d?: Vec2 | number | Rect, e?: number | Rect, f?: number, g?: number, h?: number): boolean{
         if(typeof a === 'number'){
-            if(typeof d === 'number'){
-                const rectX = d, rectY = e as number, rectW = f!, rectH = g!;
+            if(typeof e === 'number'){
+                // (startX, startY, endX, endY, rectX, rectY, rectW, rectH)
+                // Intersector.java:495 -> a=startX, b=startY, c=endX, d=endY, e=rectX, f=rectY, g=rectW, h=rectH
+                const rectX = e, rectY = f!, rectW = g!, rectH = h!;
                 const rectangleEndX = rectX + rectW;
                 const rectangleEndY = rectY + rectH;
 
-                return Intersector.intersectSegments(a, b as number, c as number, d, rectX, rectY, rectX, rectangleEndY, null)
-                    || Intersector.intersectSegments(a, b as number, c as number, d, rectX, rectY, rectangleEndX, rectY, null)
-                    || Intersector.intersectSegments(a, b as number, c as number, d, rectangleEndX, rectY, rectangleEndX, rectangleEndY, null)
-                    || Intersector.intersectSegments(a, b as number, c as number, d, rectX, rectangleEndY, rectangleEndX, rectangleEndY, null)
+                return Intersector.intersectSegments(a, b as number, c as number, d as number, rectX, rectY, rectX, rectangleEndY, null)
+                    || Intersector.intersectSegments(a, b as number, c as number, d as number, rectX, rectY, rectangleEndX, rectY, null)
+                    || Intersector.intersectSegments(a, b as number, c as number, d as number, rectangleEndX, rectY, rectangleEndX, rectangleEndY, null)
+                    || Intersector.intersectSegments(a, b as number, c as number, d as number, rectX, rectangleEndY, rectangleEndX, rectangleEndY, null)
                     || Rect.contains(rectX, rectY, rectW, rectH, a, b as number);
             }else{
-                const rect = d as Rect;
+                // (startX, startY, endX, endY, rect) —— Intersector.java:516
+                const rect = e as Rect;
                 const rectangleEndX = rect.x + rect.width;
                 const rectangleEndY = rect.y + rect.height;
 
-                if(Intersector.intersectSegments(a, b as number, c as number, e as number, rect.x, rect.y, rect.x, rectangleEndY, null))
+                if(Intersector.intersectSegments(a, b as number, c as number, d as number, rect.x, rect.y, rect.x, rectangleEndY, null))
                     return true;
 
-                if(Intersector.intersectSegments(a, b as number, c as number, e as number, rect.x, rect.y, rectangleEndX, rect.y, null))
+                if(Intersector.intersectSegments(a, b as number, c as number, d as number, rect.x, rect.y, rectangleEndX, rect.y, null))
                     return true;
 
-                if(Intersector.intersectSegments(a, b as number, c as number, e as number, rectangleEndX, rect.y, rectangleEndX, rectangleEndY, null))
+                if(Intersector.intersectSegments(a, b as number, c as number, d as number, rectangleEndX, rect.y, rectangleEndX, rectangleEndY, null))
                     return true;
 
-                if(Intersector.intersectSegments(a, b as number, c as number, e as number, rect.x, rectangleEndY, rectangleEndX, rectangleEndY, null))
+                if(Intersector.intersectSegments(a, b as number, c as number, d as number, rect.x, rectangleEndY, rectangleEndX, rectangleEndY, null))
                     return true;
 
+                // Intersector.java:532 -> rect.contains(startX, startY)
                 return rect.contains(a, b as number);
             }
         }
