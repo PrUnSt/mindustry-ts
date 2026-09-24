@@ -1,5 +1,10 @@
 {
   "extends": "../../tsconfig.base.json",
   "include": ["src/**/*.ts"],
+  // codegen 输入文件（`.def.ts`）只在构建期被 `@mindustry-ts/codegen` 解析，不参与 tsc：
+  // 它们的 `import type { Posc } from "../../gen/Posc.js"` 指向生成产物，且方法体按
+  // 「生成后可用」的约束书写（见 src/entities/comp/EntityComp.def.ts 顶部说明）。
+  // 与 codegen 自身把 fixtures/ 放在 src/ 之外的处置一致。
+  "exclude": ["src/entities/**/*.def.ts"],
   "compilerOptions": { "outDir": "dist" }
 }

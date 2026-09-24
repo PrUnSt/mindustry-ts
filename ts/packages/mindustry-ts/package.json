@@ -7,6 +7,9 @@
   "types": "src/index.ts",
   "scripts": {
     "gen": "tsx ../codegen/src/cli.ts src/entities src/gen",
+    "postgen": "tsx scripts/fix-generated-imports.ts",
+    "pretest": "pnpm gen",
+    "prebuild": "pnpm gen",
     "build": "tsc -p tsconfig.json",
     "test": "vitest run --passWithNoTests"
   },
