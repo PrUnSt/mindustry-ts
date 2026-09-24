@@ -1,6 +1,28 @@
 // 源: arc-core/src/arc/struct/Seq.java
 // 迁移说明: 可扩容、有序/无序的对象数组. 无序时 remove 把最后一个元素移到被删位置以避免内存拷贝.
 // items 用 T[] 表示 (Java 的 T[] 备份数组); null 写入通过 as any 完成 (TS strict 下 T 不含 null).
+//
+// ── remove 重载的消解方案 (S1 遗留缺陷的修复) ────────────────────────────────────────────
+// Java 有 4 个 remove 重载, 由编译器按**静态类型**消解 (Seq.java:646/652/668/689):
+//   remove(int index)                  -> 按下标移除, 返回被删元素
+//   remove(T value)                    -> 按值 (.equals()) 移除第一个匹配项
+//   remove(T value, boolean identity)  -> 同上; identity=true 时按引用 (==) 比较
+//   remove(Boolf<T> value)             -> 按谓词移除第一个匹配项
+// TS 没有重载消解. 旧实现用 `typeof arg === 'function'` 去猜「实参是值还是谓词」, 于是当元素本身
+// 就是函数时 (如 Events 里的监听器队列 Seq<Cons<?>>), `seq.remove(fnListener, true)` 会把
+// fnListener 当作断言调用 —— 语义错误 (S1 报告中的已知缺陷).
+//
+// 本文件选用的方案: 把「值/引用移除」与「谓词移除」拆成互不重叠的入口, 任何分支都不再用
+// `typeof === 'function'` 推断意图。
+//   1. remove(index: number)              数值实参一律视为下标
+//                                         (对齐 Java: 对 Seq<Integer>, remove(int) 优先于 remove(T)).
+//   2. remove(value: T)                   按值移除; 函数元素在 equalsOf 首行退化为引用比较.
+//   3. remove(value: T, identity: boolean) Java remove(T, boolean). 只要显式给了第二个实参,
+//                                         就**绝不**解释为谓词 —— 旧缺陷正是在这条路径上被触发.
+//   4. removeIf(predicate: Boolf<T>)       Java remove(Boolf<T>). 谓词路径单独命名, 与 2/3 不共用入口.
+//   removeValue(value, identity) 是第 3 条的既有别名 (OrderedMap/OrderedSet 在用), 语义完全相同.
+// 选它的理由: ① 无任何 `typeof` 意图猜测; ② 与 Java 源码 1:1 对应, 便于机械移植
+// (`remove(x, true)` -> 原样保留 / `remove(pred)` -> `removeIf(pred)`); ③ 不新增重载歧义面。
 import {Mathf, Rand} from './Mathf';
 import {hashOf, identityHashOf, equalsOf} from './Hash';
 import {jsIterator} from './Iterators';
@@ -644,6 +666,7 @@ export class Seq<T>{
      * 按值移除第一个实例, 永不把参数当作索引.
      * 对应 Java 的 {@code remove(T value, boolean identity)} 重载 (Seq.java:668);
      * 应用于 {@code OrderedSet<number>} 这类 T 为数值的场景, 避免与 {@link #remove(int)} 混淆.
+     * 与 {@link #remove(value, identity)} 是同一操作的两种拼写, 语义完全相同.
      * @param identity 若为 true 使用 === 比较, 否则使用 .equals() 语义比较.
      * @return 是否找到并移除了元素.
      */
@@ -667,15 +690,18 @@ export class Seq<T>{
         return false;
     }
 
-    /** 不使用 identity 移除一个值. */
+    /** 不使用 identity 移除一个值. 对应 Java {@code remove(T value)} (Seq.java:646). */
     remove(value: T): boolean;
-    /** 按谓词移除单个值. @return 是否找到并移除了元素. */
-    remove(value: Boolf<T>): boolean;
-    /** 移除值的第一个实例. */
+    /** 移除值的第一个实例; identity=true 时按引用 (===) 比较. 对应 Java {@code remove(T value, boolean identity)} (Seq.java:668). */
     remove(value: T, identity: boolean): boolean;
-    /** 移除并返回指定索引处的元素. */
+    /** 移除并返回指定索引处的元素. 对应 Java {@code remove(int index)} (Seq.java:689). */
     remove(index: number): T;
-    remove(valueOrIndex: any, identity: boolean = false): any{
+    remove(valueOrIndex: any, ...rest: boolean[]): any{
+        // 显式给出 identity 实参: 永远按值/引用移除, 绝不解释为谓词.
+        // (旧实现用 `typeof === 'function'` 分派, 会把函数元素当断言调用 —— 已修复.)
+        if(rest.length > 0){
+            return this.removeValue(valueOrIndex as T, rest[0]);
+        }
         if(typeof valueOrIndex === 'number'){
             const index = valueOrIndex;
             if(index < 0) throw new Error("index can't be < 0: " + index);
@@ -691,17 +717,23 @@ export class Seq<T>{
             (items[this.size] as any) = null;
             return value;
         }
-        if(typeof valueOrIndex === 'function'){
-            const value = valueOrIndex as Boolf<T>;
-            for(let i = 0; i < this.size; i++){
-                if(value(this.items[i])){
-                    this.remove(i);
-                    return true;
-                }
+        // 非数值: 按值移除 (函数元素在 equalsOf 中退化为引用比较, 不会被调用).
+        return this.removeValue(valueOrIndex as T, false);
+    }
+
+    /**
+     * 按谓词移除第一个匹配的元素. 对应 Java {@code remove(Boolf<T> value)} (Seq.java:652).
+     * 与按值移除分开命名, 因此不存在「实参是值还是谓词」的歧义。
+     * @return 是否找到并移除了元素.
+     */
+    removeIf(predicate: Boolf<T>): boolean{
+        for(let i = 0; i < this.size; i++){
+            if(predicate(this.items[i])){
+                this.remove(i);
+                return true;
             }
-            return false;
         }
-        return this.removeValue(valueOrIndex as T, identity);
+        return false;
     }
 
     /** 移除 [start, end] 区间 (含端点) 内的元素. */

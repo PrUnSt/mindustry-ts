@@ -31,17 +31,10 @@ export class Events{
     const listeners = Events.events.get(type);
     if(listeners === null) return false;
 
-    // 注意: 不能走 Seq.remove(value, identity) —— 监听器本身就是函数, 而移植版 Seq.remove
-    // 用 `typeof arg === 'function'` 分派到「按谓词移除」分支, 会把监听器当成断言调用。
-    // 这里按 Java Seq.remove(T, true) 的等价语义手动做「引用相等 → remove(index)」。
-    // 监听器队列是有序 Seq (Java `new Seq<>(Cons.class)`), remove(index) 会保持插入序。
-    for(let i = 0; i < listeners.size; i++){
-      if(listeners.items[i] === (listener as Cons<unknown>)){
-        listeners.remove(i);
-        return true;
-      }
-    }
-    return false;
+    // Java: listeners.remove(listener, true) —— 监听器队列是 Seq<Cons<T>>, 即「元素本身是函数」.
+    // Seq.remove(value, true) 现在只按引用比较 (Seq.ts 顶部注释: 已不再用 typeof==='function' 猜测意图),
+    // 因此这里可以直接用自然写法, 无需再手动索引循环.
+    return listeners.remove(listener as Cons<unknown>, true);
   }
 
   /** 触发枚举/trigger 事件 (key 为 trigger 本身)。对应 Java Events.fire(Enum<T>)。 */

@@ -1,5 +1,6 @@
 // 测试: arc-core/src/arc/struct/Seq.java 移植 (ts/packages/arc-ts/src/struct/Seq.ts)
-// 覆盖: add/addAll、get/set、removeIndex(有序/无序/越界)、removeValue、contains/indexOf、
+// 覆盖: add/addAll、get/set、removeIndex(有序/无序/越界)、remove 重载消解(函数元素/identity/removeIf)、
+//       removeValue、contains/indexOf、
 //       size/isEmpty/clear、扩容、first/peek(Java last)/pop、shrink/ensureCapacity、random、iterator/for..of、toArray
 import { describe, expect, it } from "vitest";
 import { Seq } from "./Seq";
@@ -115,6 +116,119 @@ describe("Seq<T> removeValue / contains / indexOf", () => {
     const removed = new Seq<number>([2, 4]);
     expect(t.removeAll(removed)).toBe(true);
     expect(t.toArray()).toEqual([1, 3]);
+  });
+});
+
+describe("Seq<T> remove 重载消解 (函数元素 / identity / 谓词)", () => {
+  // 反事实锚点: 修复前 remove 会用 `typeof === 'function'` 分派到「按谓词移除」分支,
+  // 把函数元素当断言调用。凡被调用即抛错, 使该缺陷无法被静默通过。
+  const boom = (): void => { throw new Error("函数元素被当作谓词调用"); };
+  const noop = (): void => {};
+
+  it("remove(fn, true) 按引用移除函数元素, 绝不把函数当谓词调用", () => {
+    const fnA = boom;
+    const fnB = noop;
+    const s = new Seq<() => void>([fnA, fnB]);
+
+    expect(s.remove(fnA, true)).toBe(true);      // 修复前: 抛 "函数元素被当作谓词调用"
+    expect(s.size).toBe(1);
+    expect(s.items[0]).toBe(fnB);                // 留下的是另一个引用 (没有删错)
+    expect(s.remove(fnA, true)).toBe(false);     // 已不在: Java 语义返回 false
+    expect(s.size).toBe(1);                      // 且不改动序列
+    expect(s.items[0]).toBe(fnB);
+  });
+
+  it("remove(fn) 单参形式按值/引用移除函数元素, 同样不调用它", () => {
+    const fnA = boom;
+    const fnB = noop;
+    const s = new Seq<() => void>([fnB, fnA]);
+
+    expect(s.remove(fnA)).toBe(true);            // 修复前: 抛 "函数元素被当作谓词调用"
+    expect(s.size).toBe(1);
+    expect(s.items[0]).toBe(fnB);                // 只删除命中引用的那一个
+  });
+
+  it("identity=true 只按引用命中: 引用不同则不移除", () => {
+    const inSeq = (): number => 1;
+    const notInSeq = (): number => 1;            // 行为相同, 引用不同
+    const s = new Seq<() => number>([inSeq]);
+
+    expect(s.remove(notInSeq, true)).toBe(false);
+    expect(s.size).toBe(1);
+    expect(s.items[0]).toBe(inSeq);
+
+    expect(s.remove(inSeq, true)).toBe(true);
+    expect(s.size).toBe(0);
+  });
+
+  it("identity=false 走 equals(), identity=true 走引用 — 同一对实例结果相反", () => {
+    class Box{
+      constructor(readonly v: number){
+      }
+      equals(o: unknown): boolean{
+        return o instanceof Box && o.v === this.v;
+      }
+    }
+    const a = new Box(1);
+    const b = new Box(1);                        // 与 a equals, 但引用不同
+
+    const s1 = new Seq<Box>([b]);
+    expect(s1.remove(a)).toBe(true);             // equals 命中 -> 删掉 b
+    expect(s1.size).toBe(0);
+
+    const s2 = new Seq<Box>([b]);
+    expect(s2.remove(a, true)).toBe(false);      // 引用比较: a !== b -> 不删
+    expect(s2.size).toBe(1);
+    expect(s2.items[0]).toBe(b);
+
+    const s3 = new Seq<Box>([b]);
+    expect(s3.remove(a, false)).toBe(true);      // 显式 identity=false 等价于 equals 路径
+    expect(s3.size).toBe(0);
+  });
+
+  it("remove(value) 只移除第一个匹配项, 重复元素保留其余", () => {
+    const s = new Seq<string>(["a", "b", "b", "c", "b"]);
+    expect(s.remove("b")).toBe(true);
+    expect(s.toArray()).toEqual(["a", "b", "c", "b"]);   // 仅首个 "b" 被删
+    expect(s.remove("b")).toBe(true);
+    expect(s.toArray()).toEqual(["a", "c", "b"]);
+    expect(s.remove("zzz")).toBe(false);                 // 找不到: false
+    expect(s.toArray()).toEqual(["a", "c", "b"]);        // 且数组逐元素未变
+  });
+
+  it("同一函数引用出现两次时, remove(fn, true) 每次只删一个", () => {
+    const fn = (): void => {};
+    const s = new Seq<() => void>([fn, fn]);
+
+    expect(s.remove(fn, true)).toBe(true);
+    expect(s.size).toBe(1);
+    expect(s.items[0]).toBe(fn);
+    expect(s.remove(fn, true)).toBe(true);
+    expect(s.size).toBe(0);
+    expect(s.remove(fn, true)).toBe(false);
+  });
+
+  it("removeIf(谓词) 接管 Java remove(Boolf), 只删第一个匹配项", () => {
+    const s = new Seq<number>([1, 2, 3, 4]);
+    expect(s.removeIf((v) => v % 2 === 0)).toBe(true);
+    expect(s.toArray()).toEqual([1, 3, 4]);      // 只删第一个偶数 (2)
+    expect(s.removeIf((v) => v > 100)).toBe(false);
+    expect(s.toArray()).toEqual([1, 3, 4]);      // 未命中: false 且不改动
+  });
+
+  it("数值实参对拍 Java 重载消解: remove(下标) vs removeValue(值)", () => {
+    const byIndex = new Seq<number>([10, 20, 30]);
+    expect(byIndex.remove(1)).toBe(20);          // remove(int) 优先
+    expect(byIndex.toArray()).toEqual([10, 30]);
+
+    const byValue = new Seq<number>([10, 20, 30]);
+    expect(byValue.removeValue(20)).toBe(true);  // remove(T, boolean)
+    expect(byValue.toArray()).toEqual([10, 30]);
+
+    // 数值重复元素: 按值移除仍只删第一个
+    const dup = new Seq<number>([7, 7, 7]);
+    expect(dup.removeValue(7)).toBe(true);
+    expect(dup.toArray()).toEqual([7, 7]);
   });
 });
 
