@@ -74,8 +74,13 @@ export function generateEntityMappingFile(
 ): string {
   const idMapSize = Math.max(256, ...entities.map((entity) => entity.classId + 1));
   const aliases = entities.flatMap((entity) => nameAliases(entity));
+  const entityNames = [...new Set(entities.map((entity) => entity.name))].sort();
 
   const lines: string[] = [config.generatedHeader, "/* eslint-disable */", ""];
+  // `static { … new Building() … }` needs the entity classes as *values*, not types —
+  // the `Entityc` import is the only type-only one. Java gets away without thinking about
+  // it because `mindustry.gen` is one package; TS files must import what they reference.
+  for (const name of entityNames) lines.push(`import { ${name} } from "./${name}${IMPORT_EXTENSION}";`);
   lines.push(`import type { Entityc } from "./Entityc${IMPORT_EXTENSION}";`);
   lines.push("");
   lines.push("/**");
@@ -110,11 +115,18 @@ export function generateEntityMappingFile(
   lines.push("  }");
   lines.push("");
   lines.push("  static {");
+  // Java writes `idMap[$id] = $Name::new` (`:812`) and gets away with it because the
+  // generated entity constructor is `protected` *and* `EntityMapping` sits in the same
+  // package — Java's protected includes package access. TypeScript's `protected` does
+  // not, so a constructor reference is a TS2674 here. Routing through the entity's own
+  // public `create()` factory keeps Java's actual intent ("do not `new` an entity from
+  // outside; ask the class for one") and, since TS emits `create() { return new X(); }`
+  // for a non-pooled entity, is the same object either way.
   for (const entity of entities) {
-    lines.push(`    EntityMapping.idMap[${entity.classId}] = () => new ${entity.name}();`);
+    lines.push(`    EntityMapping.idMap[${entity.classId}] = () => ${entity.name}.create();`);
   }
   for (const alias of aliases) {
-    lines.push(`    EntityMapping.nameMap.set(${JSON.stringify(alias.alias)}, () => new ${alias.target}());`);
+    lines.push(`    EntityMapping.nameMap.set(${JSON.stringify(alias.alias)}, () => ${alias.target}.create());`);
   }
   lines.push("  }");
   lines.push("}");

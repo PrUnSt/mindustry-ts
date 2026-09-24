@@ -35,6 +35,9 @@
 //   - `updateWeather()` —— 天气（`WeatherEntry`/`Weather` 未移植）。**注意**：`state.rules.weather`
 //     在 S3 是空 `Seq`，Java 原循环体也一次都不执行；跳过它只等价于「没有天气」，
 //     且 S3 的 `runWave`/天气随机不参与任何断言。
+//   - `Groups.weather.each(w -> state.envAttrs.add(w.weather.attrs, w.opacity))`（`update()` 内）——
+//     同一个原因：`Weather` 未移植，最小集 `WeatherStatec` 没有 `weather` 字段，且
+//     `Groups.weather` 恒为空（循环体不执行）。保留 `envAttrs.clear()` 与 `rules.attributes` 并入。
 //   - `for(TeamData data : state.teams.getActive()){ ... fillItems / BaseBuilderAI / RtsAI /
 //     prebuildAi ... }` —— 全部依赖核心物品、AI（S4/S5）与单位（计划 §9「AI/波次不做」）。
 //   - `if(!net.client() && state.wavetime <= 0 && state.rules.waves){ runWave(); }` ——
@@ -165,10 +168,13 @@ export class Logic{
         // Java: if(!net.client() && state.wavetime <= 0 && state.rules.waves){ runWave(); }
         //       —— rules.waves 默认 false → 不可达；runWave 依赖 spawner（S5），跳过。
 
-        // 应用天气属性（Java 原文）。`Groups.weather` 在 S3 恒为空 → 只并入 rules.attributes。
+        // 应用天气属性。Java: `Groups.weather.each(w -> state.envAttrs.add(w.weather.attrs, w.opacity));`
+        //   —— `Weather`/`WeatherState` 未移植（见文件头「未移植」清单：`updateWeather()` 一条）。
+        //      最小集的 `WeatherStatec` 只保留了 `opacity` 与 `Entityc`/`Posc`，没有 `weather` 字段；
+        //      同时 `Groups.weather` 在 S3/S4/S5 恒为空（不生成天气实体）→ 该循环体一次都不执行。
+        //      因此这里只保留 Java 的 `envAttrs` 重置与 `rules.attributes` 并入，语义等价。
         state.envAttrs.clear();
         state.envAttrs.add(state.rules.attributes);
-        Groups.weather.each((w) => state.envAttrs.add(w.weather.attrs, w.opacity));
 
         this.updateEntities();
 

@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import ts from "typescript";
 import { collectModels } from "../codegen.js";
 import { DEFAULT_GROUPS } from "../config.js";
-import { assignClassIds } from "./entityMappingGen.js";
+import { assignClassIds, generateEntityMappingFile } from "./entityMappingGen.js";
 import { EntityGenError, generateEntityFiles, mergeMethods, resolveEntities } from "./entityGen.js";
 import type { ComponentModel } from "../model.js";
 
@@ -166,10 +166,41 @@ describe("generateEntityFiles — merged entity pass (EntityProcess.java:421-660
     expect(base).toContain("protected index__unit: number = -1;");
     expect(base).toContain("setIndex__unit(index: number): void {");
 
-    // The base class holds fields only — no merged methods (Java `:176-213` builds
-    // fields + interfaces, and picks up getters/setters that TS folds into properties).
+    // Java builds the base class with fields only (`:176-213`) and leans on Java's rule
+    // that an abstract class need not implement the interfaces it declares. TypeScript has
+    // no such rule — `abstract class Unit implements Unitc, …` must *declare* every member
+    // of those interfaces or it is a TS2420, and every `EntityGroup<Unit>` a TS2344. So the
+    // base now carries bodyless (`abstract`) declarations for the whole component closure.
+    // The base is still a pure field carrier: `setIndex__unit` is the only body it owns.
     const baseClass = classNamed(base, "Unit")!;
-    expect(baseClass.members.filter(ts.isMethodDeclaration).map((member) => member.name.getText())).toEqual(["setIndex__unit"]);
+    const methods = baseClass.members.filter(ts.isMethodDeclaration);
+    const concreteMethodNames = methods
+      .filter((member) => !(member.modifiers ?? []).some((modifier) => modifier.kind === ts.SyntaxKind.AbstractKeyword))
+      .map((member) => member.name.getText());
+    expect(concreteMethodNames).toEqual(["setIndex__unit"]);
+
+    // Declared in component-closure order — `UnitComp`, then its dependencies
+    // (`HealthComp`, `EntityComp`, `PosComp`, `TeamComp`); `update()` collides and keeps
+    // the first owner's position (`:437-613`).
+    expect(methods.map((member) => member.name.getText())).toEqual([
+      "isGrounded",
+      "drownFloor",
+      "isValid",
+      "healthf",
+      "update",
+      "killed",
+      "kill",
+      "heal",
+      "isAdded",
+      "add",
+      "remove",
+      "set",
+      "trns",
+      "dst",
+      "cheating",
+      "inFogTo",
+      "setIndex__unit",
+    ]);
     expect(baseClass.members.filter(ts.isPropertyDeclaration).map((member) => member.name.getText())).toEqual([
       "index__unit",
       "elevation",
@@ -250,6 +281,39 @@ describe("generateEntityFiles — merged entity pass (EntityProcess.java:421-660
       inputRoot: fixturesRoot,
     });
     expect([...again.entries()]).toEqual([...outputs.entries()]);
+  });
+});
+
+describe("generateEntityMappingFile — EntityProcess.java:776-825", () => {
+  const entities = resolveEntities({
+    components: model.components,
+    entityDefs: model.entityDefs,
+    groups: DEFAULT_GROUPS,
+    classIds,
+    inputRoot: fixturesRoot,
+  });
+  const mapping = generateEntityMappingFile(entities);
+
+  it("imports every entity class as a value, not only the Entityc type", () => {
+    // The `static { … }` block constructs the entities, so each class needs a *value*
+    // import; `Entityc` is the only type-only one. Java never has to say this because
+    // `mindustry.gen` is a single package — omitted in TS it is a TS2304.
+    for (const entity of entities) {
+      expect(mapping).toContain(`import { ${entity.name} } from "./${entity.name}.js";`);
+    }
+    expect(mapping).toContain('import type { Entityc } from "./Entityc.js";');
+  });
+
+  it("goes through the entity factory rather than the protected constructor", () => {
+    // Java writes `PosTeam::new` (`:812`), which is legal there because the generated
+    // constructor is `protected` *and* `EntityMapping` sits in the same package. TS's
+    // `protected` has no package scope, so a constructor reference would be a TS2674;
+    // the entity's own `create()` factory is the way in, and Java's intent — "do not
+    // `new` an entity from outside" — is preserved rather than traded away.
+    for (const entity of entities) {
+      expect(mapping).toContain(`${entity.name}.create()`);
+    }
+    expect(mapping).not.toContain("() => new ");
   });
 });
 

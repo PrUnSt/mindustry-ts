@@ -454,6 +454,35 @@ function renderBaseClass(
   const interfaces = closure.filter((c) => c.genInterface).map((c) => c.interfaceName);
   const indexInterfaces = groups.map((group) => `IndexableEntity__${group.name}`);
 
+  const fieldLines: string[] = [];
+  for (const current of closure) {
+    for (const field of current.fields) {
+      // Java `:188` — the base class takes visible, non-readonly fields only.
+      if (field.static || field.private || field.imported || field.readonly) continue;
+      pushDoc(fieldLines, field.doc, 1);
+      fieldLines.push(`  ${field.name}: ${field.type}${defaultText(field)};`);
+    }
+  }
+
+  // Java's base class stops at the fields (`:176-213`) and leaves the interface contract
+  // open, which Java allows: an *abstract* class need not implement the interfaces it
+  // declares. TypeScript has no such rule — `abstract class X implements I` must still
+  // *declare* every member of `I`, bodyless or not. Without that, every base class is a
+  // TS2420 (`Bullet implements Bulletc, Entityc, Posc, Teamc`) and every `EntityGroup<Base>`
+  // constraint resting on it a TS2344 (`Groups.unit`, `Groups.player`, `Groups.draw`).
+  //
+  // Java's design cause is preserved rather than translated literally: the base class stays
+  // a **field carrier with no bodies**, and behaviour still lives in the concrete subclasses
+  // (`renderEntity`), which override these declarations. Marking them `abstract` is the one
+  // thing TS needs to hear that Java already knew.
+  const merged = mergeMethods(closure, symbols);
+  assertNoOverloads(merged, component.baseName);
+  const methodLines: string[] = [];
+  for (const method of merged) {
+    pushDoc(methodLines, method.representative.doc, 1);
+    methodLines.push(`  abstract ${signatureText(method.representative)};`);
+  }
+
   const body: string[] = [];
   body.push("/**");
   body.push(` * Abstract base class generated from {@link ${component.compName}} (\`@Component({ base: true })\`).`);
@@ -462,23 +491,20 @@ function renderBaseClass(
   const all = [...interfaces, ...indexInterfaces];
   body.push(`export abstract class ${component.baseName}${all.length === 0 ? "" : ` implements ${all.join(", ")}`} {`);
 
-  for (const group of groups) body.push(`  protected index__${group.name}: number = -1;`);
-  if (groups.length > 0) body.push("");
-
-  for (const current of closure) {
-    for (const field of current.fields) {
-      // Java `:188` — the base class takes visible, non-readonly fields only.
-      if (field.static || field.private || field.imported || field.readonly) continue;
-      pushDoc(body, field.doc, 1);
-      body.push(`  ${field.name}: ${field.type}${defaultText(field)};`);
-    }
-  }
-  for (const group of groups) {
+  if (groups.length > 0) {
+    for (const group of groups) body.push(`  protected index__${group.name}: number = -1;`);
     body.push("");
+  }
+  if (fieldLines.length > 0) body.push(...fieldLines, "");
+  if (methodLines.length > 0) body.push(...methodLines, "");
+
+  for (const group of groups) {
     body.push(`  setIndex__${group.name}(index: number): void {`);
     body.push(`    this.index__${group.name} = index;`);
     body.push("  }");
+    body.push("");
   }
+  while (body.length > 0 && body[body.length - 1] === "") body.pop();
   body.push("}");
 
   return assemble(component.sourceFile, body, config, symbols, [component.baseName], indexInterfaces, []);
