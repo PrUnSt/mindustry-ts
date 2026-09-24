@@ -1,12 +1,77 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>mindustry-ts (web)</title>
+    <title>mindustry-ts — 世界视图</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body { margin: 0; min-height: 100%; }
+      body {
+        background: #0b0d10;
+        color: #d8dde4;
+        font: 13px/1.5 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+        padding: 14px 12px 20px;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+        flex-wrap: wrap;
+        width: 100%;
+        max-width: 1180px;
+      }
+      .brand { font-weight: 600; color: #7fd1c0; letter-spacing: 0.02em; }
+      #toolbar, #actions { display: flex; gap: 6px; flex-wrap: wrap; }
+      button {
+        background: #171b21;
+        color: #b9c2cd;
+        border: 1px solid #262c35;
+        border-radius: 6px;
+        padding: 5px 11px;
+        font: inherit;
+        font-size: 12px;
+        line-height: 1.4;
+        cursor: pointer;
+      }
+      button:hover { background: #1f242c; border-color: #35404d; color: #e6edf5; }
+      button.active { background: #123c37; border-color: #2f8f7c; color: #7fe3cb; }
+      .sep { width: 1px; height: 20px; background: #262c35; }
+      canvas { display: block; border: 1px solid #22272f; border-radius: 8px; }
+      footer {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+        color: #6f7885;
+        font-size: 12px;
+        font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+      }
+      #hint { color: #565f6b; }
+    </style>
   </head>
   <body>
-    <div id="app">loading…</div>
+    <header>
+      <span class="brand">mindustry-ts</span>
+      <div id="toolbar"></div>
+      <span class="sep"></span>
+      <div id="actions">
+        <button id="btn-feed" type="button">供料</button>
+        <button id="btn-pause" type="button">暂停</button>
+        <button id="btn-step" type="button">单步</button>
+        <button id="btn-reset" type="button">重置</button>
+      </div>
+    </header>
+    <main><canvas id="screen"></canvas></main>
+    <footer>
+      <span id="status">初始化…</span>
+      <span id="hint">左键放置 · 右键删除 · R 旋转 · 空格暂停 · F 供料 · 1–7 切换工具</span>
+    </footer>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
