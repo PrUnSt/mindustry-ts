@@ -1,0 +1,8 @@
+# java golden · router rotation
+# world: 16x16 all-air, seed=1, Time.delta=1
+# layout: conveyor(3,2)r0[input] router(4,2)r0 conveyor(4,3)r1[outA] conveyor(4,1)r3[outB]
+# 3 copper fed one at a time; expected strict rotation A, B, A
+# columns: round|landedA|landedB
+1|1|0  # landed=A
+2|0|1  # landed=B
+3|1|0  # landed=A

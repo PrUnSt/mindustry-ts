@@ -99,6 +99,8 @@ com_crashlytics_export_strings.xml
 /tools/bin/
 *.tmp
 *.bak
+## 本地 TEMP 目录（java/gradle/vitest 的临时工作区，见 .workbuddy/memory/MEMORY.md）
+/.cache/
 *.swp
 *~.nib
 .settings/
