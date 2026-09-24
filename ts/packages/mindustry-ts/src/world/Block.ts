@@ -39,6 +39,7 @@ import { CacheLayer } from "../mocks/CacheLayer.js";
 import { Fx, Effect } from "../mocks/Fx.js";
 import { Sounds, Sound } from "../mocks/Sounds.js";
 import { TargetPriority } from "../entities/TargetPriority.js";
+import { Attributes } from "./meta/Attributes.js";
 import { BuildVisibility } from "./meta/BuildVisibility.js";
 import { BlockGroup } from "./meta/BlockGroup.js";
 import { Env } from "./meta/Env.js";
@@ -124,6 +125,15 @@ export class Block extends UnlockableContent{
   // ---- 物品 / 液体 / 电力 ----
   /** 是否有物品模块。 */
   hasItems = false;
+  /**
+   * 是否有消耗品（`Consume*`）。对应 Java `public boolean hasConsumers`（`Block.java:418`），
+   * 由 `Block.init()` 里的 `hasConsumers = consumers.length > 0` 赋值。
+   *
+   * ⚠️ S4 有意收窄: `consumeBuilder` / `consumers` 体系未移植（计划 §9）→ 恒为 false。
+   * 这与 Java 在「没有调用任何 `consume(...)`」时的结果一致，且是
+   * `BuildingComp.updateConsumption()` 选择「无消费者快路径」的**唯一**依据。
+   */
+  hasConsumers = false;
   /** 是否有液体模块。 */
   hasLiquids = false;
   /** 是否有电力模块。 */
@@ -144,12 +154,23 @@ export class Block extends UnlockableContent{
   liquidPressure = 1;
   /** 是否向外输出（按朝向）。 */
   outputFacing = true;
+  /**
+   * 是否「瞬时传递」（`Router` 的 `updateTile` 会读它来跳过等待；`OverflowGate` 置 true）。
+   * 对应 Java `public boolean instantTransfer = false`（`Block.java:393`）。
+   */
+  instantTransfer = false;
   /** 是否不接收侧向输入（装甲传送带）。 */
   noSideBlend = false;
   /** 是否显示流量。 */
   displayFlow = true;
   /** 该方块采掘时掉落的物品。 */
   itemDrop: Item | null = null;
+
+  /**
+   * 环境属性表（水量/油量/热量…）。对应 Java `public Attributes attributes = new Attributes()`
+   * （`Block.java:189`）。S4 起由环境地板（`grass` / `snow` / `sand-floor`）与矿石写入。
+   */
+  attributes = new Attributes();
 
   // ---- 放置 / 环境 ----
   /** 是否可放置在水中。 */
@@ -433,6 +454,38 @@ export class Block extends UnlockableContent{
   /** @return 是否为空气方块（id 0）。对应 Java `isAir()`。 */
   isAir(): boolean{
     return this.id === 0;
+  }
+
+  /** @return 该方块是否输出物品。对应 Java `outputsItems()`（`Block.java:608`）：恒等于 `hasItems`。 */
+  outputsItems(): boolean{
+    return this.hasItems;
+  }
+
+  /**
+   * @return 该方块是否按朝向决定输出方向。对应 Java `rotatedOutput(int,int)`（`Block.java:622`）：
+   * 默认恒等于 `rotate`。
+   * ⚠️ Java 另有一个 `rotatedOutput(int,int,Tile)` 重载（`Block.java:626`）同样返回 `rotate`；
+   * TS 用可选参数合一，语义相同。
+   */
+  rotatedOutput(_fromX?: number, _fromY?: number, _destination?: Tile): boolean{
+    return this.rotate;
+  }
+
+  /** 对应 Java `canPlaceOn(Tile, Team, int)`（`Block` 默认恒 true）。 */
+  canPlaceOn(_tile: Tile, _team: Team, _rotation: number): boolean{
+    return true;
+  }
+
+  /**
+   * @return 该方块是否把 `item` 当作消耗品。对应 Java `consumesItem(Item)`（`Block.java:787`）。
+   *
+   * ⚠️ 有意收窄（S4）: Java 的实现是 `consumers.length > 0 && Structs.contains(...)`，
+   * 依赖未移植的 `Consume` 体系（计划 §9：不做消耗品）。S4 的方块集合里没有任何
+   * consumer（`Block.hasConsumers` 恒 false），故恒返回 false —— 与 Java 在
+   * 「无消费者」时的结果一致，**不是**静默省略（`hasConsumers` 字段也一并补上并恒为 false）。
+   */
+  consumesItem(_item: Item): boolean{
+    return false;
   }
 
   /** 对应 Java `asFloor()`：把本方块视作地板（Java 是 `(Floor)this` 强转）。 */

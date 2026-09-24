@@ -328,7 +328,7 @@ export class ContentLoader{
       : this.getByName<Item>(ContentType.item, idOrName);
   }
 
-  /** 对应 Java `liquids()`。S3 恒为空（见 `content/Liquids.ts`）。 */
+  /** 对应 Java `liquids()`。（S3 为空，S4 起有 11 种 —— 见 `content/Liquids.ts`。） */
   liquids(): Seq<Liquid>{
     return this.getBy<Liquid>(ContentType.liquid);
   }

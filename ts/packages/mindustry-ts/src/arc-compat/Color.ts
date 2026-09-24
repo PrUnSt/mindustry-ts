@@ -49,6 +49,42 @@ export class Color{
     return new Color(this.r, this.g, this.b, this.a);
   }
 
+  /** 对应 `Color.set(float r, float g, float b, float a)`（S4 起被 `Liquids` 需要）。 */
+  set(r: number, g: number, b: number, a: number): Color{
+    this.r = r;
+    this.g = g;
+    this.b = b;
+    this.a = a;
+    return this;
+  }
+
+  /**
+   * 对应 `Color.a(float alpha)`：**原地**写入 alpha 并返回 `this`（Java 的链式写法
+   * `Color.valueOf("f0511d").a(0.4f)` 依赖它）。
+   *
+   * ⚠️ 陷阱 #16（**TS 相对 Java 的一处被迫改名**）: Java 的 `arc.graphics.Color` 同时有
+   * **字段** `public float a` 与**方法** `public Color a(float)` —— Java 允许同名，TS 不允许
+   * （`TS2300: Duplicate identifier 'a'`，且实例字段会静默遮蔽原型方法 → 调用点变成
+   * 「Number 不是函数」的运行时崩溃，`tsc` 报 `TS2349`）。
+   * 处置判据与 `Tile.block()` 一致 —— **保留被读/写最多的那个名字**：
+   *   - 字段 `a` 是渲染/数学/打包（`rgba()`）与 `Liquids` 之外全部代码的读取点，保留；
+   *   - 方法 `a(float)` 在 S4 只有 2 个调用点（`Liquids.java:53,71` 的 `.a(0.4f)/.a(0.2f)`），
+   *     改名 `alpha(...)`。语义（原地写、返回 `this`）与 Java 逐字一致。
+   */
+  alpha(alpha: number): Color{
+    this.a = alpha;
+    return this;
+  }
+
+  /**
+   * 对应 `Color.grays(float value)`：构造灰度色 `(value, value, value, 1)`。
+   * 注意 Java 还有 `Color.grays(float, float out)` 的**写出参**重载（写进第二个参数）；
+   * 那是为了避免分配，TS 侧不需要（可变对象由调用方自行 `cpy()`）。
+   */
+  static grays(value: number): Color{
+    return new Color(value, value, value, 1);
+  }
+
   mul(f: number): Color{
     this.r *= f;
     this.g *= f;

@@ -702,6 +702,88 @@ export class Tile{
     }
   }
 
+  // ---------------------------------------------------------------- 建筑的邻近列表
+  //
+  // ⚠️ 为什么这两段代码在 `Tile` 而不在 `BuildingComp`（S4 新增，必须知道）:
+  //   Java 的实现在 `BuildingComp.updateProximity()` / `removeFromProximity()`
+  //   （`BuildingComp.java:1866-1914`），它们需要 `Edges.getEdges(block.size)` 与
+  //   `world.build(...)`。TS 的 `Building` 是 **codegen 产物**，只能 import「组件接口名 /
+  //   `Groups` / 基类名」，无法 import `Edges`（见 `BuildingComp.def.ts` 文件头）。
+  //   而 `Tile` 是手写文件且**本来就** import 了 `Edges`（`changeBuild` 用它找边界建筑），
+  //   所以把真实实现放在这里，`BuildingComp.updateProximity()` 只做 `this.tile.rebuildProximity()`
+  //   的转发。语义与 Java 逐行一致（同样的 `block.size`、同样的 `tile.x/tile.y`）。
+  //
+  //   `proximityTmp` 对应 Java 的 `static final ObjectSet<Building> tmpTiles`
+  //   （`BuildingComp.java:57`）—— 共享的临时集合；JS 的 `Set` 与 arc 的 `ObjectSet`
+  //   都保持**首次插入顺序**，故 `proximity` 的最终顺序与 Java 一致（确定性前提）。
+
+  /** 复用的临时集合（Java `BuildingComp.tmpTiles`）。 */
+  private static readonly proximityTmp = new Set<Building>();
+
+  /**
+   * 对应 Java `BuildingComp.updateProximity()`。
+   * 重建**本 tile 上建筑**的 `proximity`，并对**两个方向**都维护: 既把邻居加进自己的列表，
+   * 也把自己加进邻居的列表（`other.proximity.addUnique(self())`），最后让所有相关建筑
+   * 重跑 `onProximityUpdate()` —— 这是 `Conveyor` 的 `next` / `Router` 的轮转投递
+   * 能立即生效的前提。
+   */
+  rebuildProximity(): void{
+    const build = this.build;
+    if(build === null) return;
+
+    const tmp = Tile.proximityTmp;
+    tmp.clear();
+    build.proximity.length = 0;
+
+    for(const point of Edges.getEdges(build.block.size)){
+      const other = Vars.world.build(this.x + point.x, this.y + point.y);
+
+      if(other === null || other.team !== build.team) continue;
+
+      // Java: `other.proximity.addUnique(self())` —— 按**身份**去重
+      if(!other.proximity.includes(build)) other.proximity.push(build);
+      tmp.add(other);
+    }
+
+    // Java 注释: 「using a set to prevent duplicates」
+    for(const other of tmp) build.proximity.push(other);
+
+    build.onProximityAdded();
+    build.onProximityUpdate();
+
+    for(const other of tmp) other.onProximityUpdate();
+
+    // Java 末尾: `if(!headless && block.drawCached) recache();`
+    // —— `recache()` 的唯一副作用是 renderer 缓存失效，headless 下本就是 no-op（计划 §9）。
+  }
+
+  /** 对应 Java `BuildingComp.removeFromProximity()`。 */
+  removeBuildProximity(): void{
+    const build = this.build;
+    if(build === null) return;
+
+    build.onProximityRemoved();
+
+    const tmp = Tile.proximityTmp;
+    tmp.clear();
+
+    for(const point of Edges.getEdges(build.block.size)){
+      const other = Vars.world.build(this.x + point.x, this.y + point.y);
+      if(other !== null){
+        tmp.add(other);
+      }
+    }
+
+    for(const other of tmp){
+      // Java: `other.proximity.remove(self(), true)` —— 按身份移除**首个**匹配项
+      const idx = other.proximity.indexOf(build);
+      if(idx !== -1) other.proximity.splice(idx, 1);
+      other.onProximityUpdate();
+    }
+
+    build.proximity.length = 0;
+  }
+
   /** 对应 Java `changed()`。 */
   protected changed(): void{
     if(!Vars.world.isGenerating()){

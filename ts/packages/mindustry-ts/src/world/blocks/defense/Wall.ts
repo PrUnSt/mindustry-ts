@@ -1,20 +1,29 @@
-// 源: core/src/mindustry/world/blocks/defense/Wall.java
+// 源: core/src/mindustry/world/blocks/defense/Wall.java (210 行)
 //
-// 移植范围: 类字段、构造器、`init()`，以及 `WallBuild` 的**非渲染**部分。
+// 移植范围（S4）: 类字段、构造器、`init()`，以及 `WallBuild` 的**非渲染部分**。
+//   ⚠️ 相对 S3 的关键变化: S3 把 `onProximityUpdate/Added/Removed` 与
+//   `updateAutotileBits` / `updateOtherBits` 标为「只产生永不执行的死代码」而略过 ——
+//   理由是当时 `BuildingComp.updateProximity()` 是空实现。**S4 已实现邻接**，
+//   所以这五个方法现在是**真正会执行**的行为（`Wall.autotile` 为 true 时），故补齐。
+//
 // 未移植（逐条标注）:
-//   - `setStats()`            —— 依赖 `Stat` / `StatUnit` 目录
-//   - `load()` / `icons()`    —— 贴图（计划 §9）
-//   - `WallBuild.drawCached()` / `draw()` / `collision(Bullet)` —— 渲染与子弹系统（计划 §9）
-//   - `WallBuild.updateAutotileBits()` / `updateOtherBits()` 与 `onProximityUpdate/Added/Removed`
-//     覆写 —— 它们唯一的副作用是 `recache()`，而 Java 的 `BuildingComp.recache()` 是
-//     `if(!headless) renderer.blocks.recacheBuilding(...)`（`BuildingComp.java:1290`），
-//     headless 下本就是 no-op；且 S3 的 `updateProximity()` 是空实现（邻接留 S4）。
-//     因此移植它们只会产生永不执行的死代码。
+//   - `setStats()`        —— 依赖 `Stat` / `StatUnit` 目录。
+//   - `load()`            —— `TileBitmask.load(name)` 需要 `Core.atlas`（headless 为 null，计划 §9）。
+//     `autotileRegions` 字段随之省略（唯一消费者是 `drawCached()`）。
+//   - `icons()`           —— 贴图。
+//   - `drawCached()` / `draw()` / `collision(Bullet)` —— 渲染与子弹系统（计划 §9）。
+//     ⚠️ `collision` 里会给 `hit = 1` 并可能触发闪电/弹开；无子弹系统 → 整段不做，
+//     `hit` 字段保留（渲染用）并在此标注它在本阶段恒为 0。
 //
 // ⚠️ 陷阱 #6（计划 §6.2）: Java 用 `WallBuild` 这个**内部类**，靠反射在 `initBuilding()` 里
-// 找到它。TS 侧改为在构造器里显式注册：`this.buildType = () => new WallBuild(this)`。
+// 找到它。TS 侧改为在构造器里显式注册：`this.buildType = () => new WallBuild()`。
 // `WallBuild` 通过 `block`（由 `BuildingComp.create()` 赋值）取回外部 `Wall` 实例，
 // 等价于 Java 内部类的隐式外部引用。
+//
+// ⚠️ 可访问性调整（**相对 Java 的显式偏差**）: Java 的 `WallBuild.autotileBits` 是 `protected`。
+//   TS 侧提升为 `public` —— 理由: 渲染路径未移植，`autotileBits` 在 headless 下**没有**其它
+//   观察者，而它是本阶段 `Wall` 唯一可验证的行为（`wall-autotile` 测试要在不 `as any` 强转的
+//   前提下断言它）。若将来补渲染，可改回 `protected`。
 
 import { Building } from "../../../gen/Building.js";
 import { Block } from "../../Block.js";
@@ -23,13 +32,19 @@ import { Env } from "../../meta/Env.js";
 import { TargetPriority } from "../../../entities/TargetPriority.js";
 import { Color } from "../../../arc-compat/Color.js";
 import { Pal } from "../../../arc-compat/Pal.js";
+import { Geometry } from "../../../arc-compat/Geometry.js";
+import { Vars } from "../../../Vars.js";
 import { Sound, Sounds } from "../../../mocks/Sounds.js";
+import type { Tile } from "../../Tile.js";
 
 /** 对应 `mindustry.world.blocks.defense.Wall.WallBuild`。 */
 export class WallBuild extends Building{
-  /** 自动拼接位掩码。 */
-  protected autotileBits = 0;
-  /** 受击闪白强度，1 → 0。 */
+  /**
+   * 自动拼接位掩码（8 邻域，bit i 对应 `Geometry.d8[i]`）。
+   * Java `protected int autotileBits`。⚠️ TS 提升为 public，原因见文件头。
+   */
+  autotileBits = 0;
+  /** 受击闪白强度，1 → 0。⚠️ S4 无子弹系统 → 恒为 0（见文件头）。 */
   protected hit = 0;
 
   /**
@@ -42,11 +57,84 @@ export class WallBuild extends Building{
     super();
   }
 
-  // Java 的 `WallBuild` 是 `Wall` 的**非静态内部类**，隐式持有外部 `Wall` 实例。
-  // 本移植里唯一需要外部实例的两个方法（`updateAutotileBits` / `updateOtherBits`）
-  // 不在 S3 范围（它们唯一的副作用 `recache()` 在 headless 下本就是 no-op，见文件头），
-  // 因此这里**不**保留 `wall` getter —— 若将来需要，用 `this.block as Wall` 取回
-  // （`BuildingComp.create()` 已把 `block` 指向外部 `Wall`），语义等价于 Java 内部类。
+  /** Java 的 `WallBuild` 是内部类，直接读外部 `Wall.this.block`；TS 显式取回。 */
+  private get wall(): Wall{
+    return this.block as Wall;
+  }
+
+  /**
+   * 对应 Java `updateAutotileBits()`：扫描 8 邻域，把「同方块、同队伍」的邻居记为已连接。
+   * @return 位掩码是否变化（Java 用 `prev != autotileBits` 决定是否 `recache()`）。
+   */
+  updateAutotileBits(): boolean{
+    const prev = this.autotileBits;
+    this.autotileBits = 0;
+
+    const tile = this.tile as Tile;
+    const size = this.block.size;
+
+    for(let i = 0; i < 8; i++){
+      const dx = Geometry.d8[i]!.x;
+      const dy = Geometry.d8[i]!.y;
+      const other = tile.nearby(dx * size, dy * size);
+      if(other !== null && other.build !== null && other.build.block === this.block && other.build.team === this.team){
+        this.autotileBits |= 1 << i;
+      }
+    }
+
+    // Java: `if(prev != autotileBits) recache();` —— `recache()` 是渲染缓存失效
+    // （`BuildingComp.recache()` 里 `if(!headless)` 守卫），headless 下无副作用。
+    return prev !== this.autotileBits;
+  }
+
+  /**
+   * 对应 Java `updateOtherBits()`：让 8 邻域里**已是中心**的同方块同队伍墙重算自己的位掩码
+   * （自己变了，邻居的边缘也随之变化）。
+   */
+  updateOtherBits(): void{
+    const tile = this.tile as Tile;
+    const size = this.block.size;
+
+    for(let i = 0; i < 8; i++){
+      const dx = Geometry.d8[i]!.x;
+      const dy = Geometry.d8[i]!.y;
+      const other = tile.nearby(dx * size, dy * size);
+      if(
+        other !== null &&
+        other.build !== null &&
+        other.isCenter() &&
+        other.build.block === this.block &&
+        other.build.team === this.team &&
+        other.build instanceof WallBuild
+      ){
+        other.build.updateAutotileBits();
+      }
+    }
+  }
+
+  /** 对应 Java `onProximityUpdate()`。 */
+  override onProximityUpdate(): void{
+    super.onProximityUpdate();
+
+    if(this.wall.autotile) this.updateAutotileBits();
+  }
+
+  /** 对应 Java `onProximityRemoved()`。 */
+  override onProximityRemoved(): void{
+    super.onProximityRemoved();
+
+    if(this.wall.autotile) this.updateOtherBits();
+  }
+
+  /** 对应 Java `onProximityAdded()`。 */
+  override onProximityAdded(): void{
+    super.onProximityAdded();
+
+    if(this.wall.autotile && !Vars.world.isGenerating()) this.updateOtherBits();
+  }
+
+  // Java `drawCached()` / `draw()` —— 渲染路径，见文件头。
+  // Java `collision(Bullet)` —— 子弹系统，见文件头。
 }
 
 /** 对应 `mindustry.world.blocks.defense.Wall`。 */
@@ -72,6 +160,8 @@ export class Wall extends Block{
   deflectSound: Sound = Sounds.none;
   /** 是否使用自动拼接（参见 tile-gen）。 */
   autotile = false;
+
+  /** Java `protected TextureRegion[] autotileRegions` —— 见文件头（`load()` 未移植）。 */
 
   constructor(name: string){
     super(name);

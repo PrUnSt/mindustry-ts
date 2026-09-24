@@ -49,6 +49,26 @@ export { BlockGroup } from "./world/meta/BlockGroup.js";
 export { BuildVisibility } from "./world/meta/BuildVisibility.js";
 export { Env } from "./world/meta/Env.js";
 export { Attributes } from "./world/meta/Attributes.js";
+export { Attribute } from "./world/meta/Attribute.js";
+
+// ---- 世界: S4 新增（自动拼接 / 覆盖层 / 邻接工具）----
+export { TileBitmask } from "./world/blocks/TileBitmask.js";
+export type { ControlBlock } from "./world/blocks/ControlBlock.js";
+export { AutotilerHolder, Autotilers } from "./world/Autotiler.js";
+export type { Autotiler, AutotilerPlan } from "./world/Autotiler.js";
+export { OverlayFloor } from "./world/blocks/environment/OverlayFloor.js";
+export { OreBlock } from "./world/blocks/environment/OreBlock.js";
+export { StoneFloor } from "./world/blocks/environment/StoneFloor.js";
+export { GrassFloor } from "./world/blocks/environment/GrassFloor.js";
+export { SandFloor } from "./world/blocks/environment/SandFloor.js";
+export { SnowFloor } from "./world/blocks/environment/SnowFloor.js";
+
+// ---- 世界: 建筑模块（S4 物品/液体库存）----
+export { BlockModule } from "./world/modules/BlockModule.js";
+export { ItemModule } from "./world/modules/ItemModule.js";
+export type { ItemConsumer, ItemCalculator } from "./world/modules/ItemModule.js";
+export { LiquidModule } from "./world/modules/LiquidModule.js";
+export { PowerModule } from "./world/modules/PowerModule.js";
 
 // ---- 游戏状态 ----
 export { GameState, State } from "./core/GameState.js";

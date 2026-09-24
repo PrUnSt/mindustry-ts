@@ -14,6 +14,7 @@ import { beforeAll, describe, expect, test } from "vitest";
 import { Vars } from "../Vars.js";
 import { Blocks } from "../content/Blocks.js";
 import { Items } from "../content/Items.js";
+import { Liquids } from "../content/Liquids.js";
 import { ContentType } from "../ctype/ContentType.js";
 import { Team } from "../game/Team.js";
 import { defaultEnv } from "../game/defaults.js";
@@ -101,17 +102,56 @@ describe("bootstrap: 内容 id 与注册表（陷阱 #2/#8）", () => {
     expect(Blocks.air.wall).toBe(Blocks.air);
   });
 
-  test("22 个物品已按 Java 顺序创建", () => {
+  test("22 个物品已按 Java 顺序创建；11 种液体已按 Java 的 load 顺序创建（S4）", () => {
     expect(Vars.content.items().size).toBe(22);
     expect(Items.copper.id).toBe(0);
     expect(Vars.content.item("copper")).toBe(Items.copper);
-    // 液体在 S3 有意为空（见 content/Liquids.ts）
-    expect(Vars.content.liquids().size).toBe(0);
+
+    // ⚠️ S3 这里断言的是 `liquids().size === 0`（当时 `Liquids.load()` 是空的）。
+    // S4 起液体是真实内容（见 `content/Liquids.ts`），**不能**把断言改成另一个写死的
+    // 数字了事 —— 那样只能抓「数量变了」而抓不到「注册表坏了」。改为钉死三条真正的不变量:
+    //   ① 每个液体的 id 严格等于下标（`ContentLoader.logContent()` 的同一判据）；
+    //   ② 名字表与索引表**双向一致**（重复注册 / 漏注册 / 顺序错位都会红）；
+    //   ③ Java `load()` 的**顺序锚点**: water 必须是 0、cyanogen 必须是 10
+    //      （顺序错了 → 液体的 id 全部错位，而 `ContentType.liquid` 的 id 是线性语义）。
+    const liquids = Vars.content.liquids();
+    expect(liquids.size).toBeGreaterThanOrEqual(11);
+    for(let i = 0; i < liquids.size; i++){
+      const liquid = liquids.get(i)!;
+      expect(liquid.id, "liquid[" + i + "]").toBe(i);
+      expect(Vars.content.liquid(liquid.name), liquid.name).toBe(liquid);
+    }
+    expect(Liquids.water.id).toBe(0);
+    expect(Vars.content.liquid("water")).toBe(Liquids.water);
+    expect(Liquids.cyanogen.id).toBe(10);
+    expect(Vars.content.liquid("cyanogen")).toBe(Liquids.cyanogen);
   });
 
-  test("S3 的方块集合是 6 个，且都能按名字查到", () => {
-    expect(Vars.content.blocks().size).toBe(6);
-    for(const name of ["air", "stone", "stone-wall", "copper-wall", "conveyor", "router"]){
+  test("方块集合覆盖 S3/S4 的最小集；air 在第 0 位，且 id / 名字表双向一致", () => {
+    // ⚠️ S3 这里是一个写死的 `blocks().size === 6`。S4 新增了 4 个环境地板 + 6 个矿石
+    //    （见 `content/Blocks.ts` 的文件头），数量会持续增长 → 断言改成「下限 + 不变量」:
+    //      ① `air.id === 0` 且在索引 0（硬约束，`Tile` 构造器与 `Floor` 初值都依赖它）；
+    //      ② 每个方块 id === 下标、名字表与索引表双向一致 —— 这才是「注册表坏了」的判据
+    //         （重复注册会被 `ContentLoader` 拒绝，但「漏调 load()」「顺序写错」只有它能抓）；
+    //      ③ 逐名列举 S3/S4 的全部方块，确保不是「数量对但内容错」。
+    const blocks = Vars.content.blocks();
+    expect(blocks.size).toBeGreaterThanOrEqual(15);
+    expect(Blocks.air.id).toBe(0);
+    expect(blocks.get(0)).toBe(Blocks.air);
+
+    for(let i = 0; i < blocks.size; i++){
+      const block = blocks.get(i)!;
+      expect(block.id, "block[" + i + "]").toBe(i);
+      expect(Vars.content.block(block.name), block.name).toBe(block);
+    }
+
+    for(const name of [
+      // S3 的 6 个
+      "air", "stone", "stone-wall", "copper-wall", "conveyor", "router",
+      // S4 的 9 个（4 个环境地板 + 6 个矿石；注意沙地的内部名是 "sand-floor"）
+      "sand-floor", "grass", "snow",
+      "ore-copper", "ore-lead", "ore-scrap", "ore-coal", "ore-titanium", "ore-thorium"
+    ]){
       expect(Vars.content.block(name), name).not.toBeNull();
     }
   });

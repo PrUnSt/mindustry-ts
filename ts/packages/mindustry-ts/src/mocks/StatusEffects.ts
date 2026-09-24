@@ -28,8 +28,23 @@ export class StatusEffect{
   }
 }
 
-/** 对应 `mindustry.content.StatusEffects`（S3 子集）。 */
+/** 对应 `mindustry.content.StatusEffects`（S3/S4 子集）。 */
 export const StatusEffects = {
   /** Java `StatusEffects.none`: 「无状态」哨兵（不是 `Content`，Java 里也是普通静态字段）。 */
-  none: new StatusEffect("none", true)
+  none: new StatusEffect("none", true),
+  /**
+   * Java `StatusEffects.freezing`。S4 起由 `Liquids.cryofluid.effect` 引用。
+   * ⚠️ 本数组是 Java 的**子集且保持 Java 的相对顺序**（Java 顺序: none, burning, freezing,
+   * unmoving, slow, fast, wet, muddy, melting, sapped, tarred, ...）。因为
+   * `StatusEffect` 在 TS 侧还不是 `Content`（`getContentType()` 返回 null），
+   * 子集化不会让任何 id 错位；将来把 `StatusEffects` 接进 `content` 时必须补齐全部成员。
+   */
+  freezing: new StatusEffect("freezing"),
+  /** Java `StatusEffects.wet`。由 `Liquids.water.effect` 引用。 */
+  wet: new StatusEffect("wet"),
+  /** Java `StatusEffects.melting`。由 `Liquids.slag.effect` 引用。 */
+  melting: new StatusEffect("melting"),
+  /** Java `StatusEffects.tarred`。由 `Liquids.oil.effect` 引用。 */
+  tarred: new StatusEffect("tarred")
 } as const;
+
