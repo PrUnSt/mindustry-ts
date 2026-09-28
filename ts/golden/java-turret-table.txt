@@ -1,0 +1,33 @@
+# java golden · turret table
+# source: content.blocks() where attacks == true (all BaseTurret subclasses)
+# columns: name|health|size|range|reload|category|ammoBullets(comma, only ItemTurret)
+build-tower|610|3|200.0|-1.0|effect|
+duo|250|1|160.0|20.0|turret|BasicBulletType,BasicBulletType,BasicBulletType
+scatter|800|2|220.0|18.0|turret|FlakBulletType,FlakBulletType,FlakBulletType
+scorch|400|1|60.0|6.0|turret|BulletType,BulletType
+hail|260|1|235.0|60.0|turret|ArtilleryBulletType,ArtilleryBulletType,ArtilleryBulletType
+wave|1000|2|110.0|3.0|turret|
+lancer|1120|2|165.0|80.0|turret|
+arc|260|1|90.0|35.0|turret|
+parallax|640|2|300.0|-1.0|turret|
+swarmer|1200|2|240.0|34.285713|turret|MissileBulletType,MissileBulletType,MissileBulletType
+salvo|960|2|190.0|29.0|turret|BasicBulletType,BasicBulletType,BasicBulletType,BasicBulletType,BasicBulletType
+segment|1000|2|180.0|8.0|turret|
+tsunami|2250|3|190.0|3.0|turret|
+fuse|1980|3|90.0|35.0|turret|ShrapnelBulletType,ShrapnelBulletType
+ripple|1170|3|290.0|120.0|turret|ArtilleryBulletType,ArtilleryBulletType,ArtilleryBulletType,ArtilleryBulletType,ArtilleryBulletType
+cyclone|1305|3|200.0|10.0|turret|FlakBulletType,FlakBulletType,FlakBulletType,FlakBulletType
+foreshadow|2400|4|500.0|200.0|turret|RailBulletType
+spectre|2560|4|260.0|7.0|turret|BasicBulletType,BasicBulletType,BasicBulletType
+meltdown|3200|4|195.0|90.0|turret|
+breach|1620|3|190.0|40.0|turret|BasicBulletType,BasicBulletType,BasicBulletType
+diffuse|1890|3|125.0|30.0|turret|BasicBulletType,BasicBulletType,BasicBulletType
+sublimate|1890|3|130.0|10.0|turret|
+titan|4000|4|390.0|138.0|turret|ArtilleryBulletType,ArtilleryBulletType,ArtilleryBulletType
+disperse|4480|4|310.0|9.0|turret|BasicBulletType,BasicBulletType,BasicBulletType,BasicBulletType
+afflict|3520|4|368.0|50.0|turret|
+lustre|3360|4|250.0|10.0|turret|
+scathe|3520|4|1350.0|600.0|turret|BulletType,BulletType,BulletType
+smite|8750|5|300.0|100.0|turret|BasicBulletType
+malign|9250|5|410.0|3.5|turret|
+# total turrets: 29

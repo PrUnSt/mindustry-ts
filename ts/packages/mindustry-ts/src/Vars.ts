@@ -2,7 +2,8 @@
 //
 // 移植范围: S3 的 tick 闭环实际会读到的全部全局量 —— 常量（`tilesize` / `darkRadius` /
 // `maxBlockSize` / `finalWorldBounds` / `defaultEnv`）、模块引用（`content` / `world` /
-// `state` / `collisions` / `net` / `indexer` / `player`）、`headless` 标志、`emptyTile`，
+// `state` / `collisions` / `net` / `indexer` / `player`），S4 新增 `spawner`（波次生成器）、
+// `headless` 标志、`emptyTile`，
 // 以及 `init()` 的**顺序**（逐行照抄 `Vars.java:311-394` 的 headless 分支）。
 //
 // ⚠️ 陷阱 #1（计划 §6.2）: `Vars.init()` 的顺序**不可改**，因为：
@@ -27,7 +28,7 @@
 //   - `emptyMap`（= `new Map(new StringMap())`）—— `Map` 类未移植
 //   - `mods` / `maps` / `schematics` / `becontrol` / `asyncCore` / `bases` / `logicVars` /
 //     `editor` / `avoidance` / `unitPhysics` / `assetCache` / `service` / `universe` /
-//     `spawner` / `pathfinder` / `controlPath` / `fogControl` / `control` / `logic` /
+//     `pathfinder` / `controlPath` / `fogControl` / `control` / `logic` /
 //     `renderer` / `ui` / `netServer` / `netClient` / `waves` / `tree` / `platform` /
 //     `mainExecutor` / `loadedServerCache` / `fetchedServers` / `maxTextureSize` / … ——
 //     分别属于 Mod / 地图 / 蓝图 / 后台 / 逻辑 / 渲染 / 网络 / UI（S4+ 或明确不做）
@@ -50,6 +51,7 @@ import { defaultEnv } from "./game/defaults.js";
 import { ContentLoader } from "./core/ContentLoader.js";
 import { EntityCollisions } from "./entities/EntityCollisions.js";
 import { GameState } from "./core/GameState.js";
+import { Spawner } from "./game/Spawner.js";
 import { World } from "./core/World.js";
 import { Tile } from "./world/Tile.js";
 
@@ -105,6 +107,13 @@ export class Vars{
   static collisions: EntityCollisions;
   /** 世界。 */
   static world: World;
+  /**
+   * 波次生成器（S4 起已移植，`game/Spawner.ts`）。
+   * Java 声明 `public static WaveSpawner spawner;`（`Vars.java:290`，位于 `maps` 之后、
+   * `indexer` 之前）；初始化 `spawner = new WaveSpawner();`（`Vars.java:363`）。
+   * ⚠️ TS 侧 `maps` 未移植，故 `spawner` 直接接在 `world` 之后、`indexer` 之前 —— 相对顺序与 Java 一致。
+   */
+  static spawner: Spawner;
   /** 当前玩家。S3 是单机 headless，恒为 null（计划 §9）。 */
   static player: unknown | null = null;
   /**
@@ -141,13 +150,15 @@ export class Vars{
 
     // ---- 模块创建顺序（`Vars.java:353-377`；未移植的模块原位标注）----
     Vars.content = new ContentLoader();
-    // Java: waves = new Waves();                  —— 波次生成器属 S5。
+    // Java: waves = new Waves();                  —— `Waves`（战役扇区波次管理器）属 S5。
     Vars.collisions = new EntityCollisions();
     Vars.world = new World();
     // Java: universe / becontrol / asyncCore / editor —— S5 / 后台 / 编辑器（计划 §9）。
-    // Java: maps / spawner / indexer / pathfinder / controlPath / fogControl /
-    //       bases / logicVars / assetCache / javaPath —— 分别属地图 / 波次 / 寻路 /
-    //       逻辑 / 资产 / 文件系统（S4+ 或不做）。
+    // Java: maps = new Maps();                    —— 地图加载属 S4+（`Map` 类未移植）。
+    // Java `Vars.java:363`: spawner = new WaveSpawner();
+    Vars.spawner = new Spawner();
+    // Java: indexer / pathfinder / controlPath / fogControl / bases / logicVars /
+    //       assetCache / javaPath —— 寻路 / 逻辑 / 资产 / 文件系统（S4+ 或不做）。
 
     Vars.state = new GameState();
 

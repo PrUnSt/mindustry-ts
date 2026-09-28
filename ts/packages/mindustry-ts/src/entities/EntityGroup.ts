@@ -17,13 +17,13 @@
 // 查询面（size/isEmpty/index/contains/count/first/find/each/rawSeq/copy）与
 // `resize` / `useTree` / `mappingEnabled` / `getByID` / `removeByID` / `checkIDCollisions`。
 //
-// 未移植（逐条标注）:
-//   - `draw(Cons<T>)`         —— 渲染路径（读 `Core.camera` / `Drawc.clipSize()`），计划 §9
-//   - `intersect(...)` 三个重载 —— arc-ts 的 `QuadTree` 内部用的是它**自己的**本地 `Seq` 类型
-//     （见 `arc-ts/src/math/geom/QuadTree.ts:6`），与 `@mindustry-ts/arc` 导出的 `Seq` 不是同一个
-//     类，无法安全桥接；而 S3 的 tick 路径没有任何空间查询调用点（无子弹/单位碰撞）。
-//     TODO(S4): 子弹/单位阶段补齐（届时 `QuadTree` 的 `Seq` 需先统一）。
-//   - `sort(Comparator)`      —— S3 无调用点；`Seq.sort` 已可用，留待 S4。
+// S4 起已补齐（原阻塞已由 arc-ts 侧解除）:
+//   - `intersect(...)` 三个重载 —— arc-ts 的 `QuadTree`（`src/math/geom/QuadTree.ts`）现已统一使用
+//     正式 `struct/Seq` + 函数式 `Cons`/`Boolf`，`instanceof Seq` 可用，因此按 Java 原文逐字移植。
+//
+// 仍未移植（逐条标注）:
+//   - `draw(Cons<T>)`         —— 渲染路径（读 `Core.camera` / `Drawc.clipSize()`），计划 §9。
+//   - `sort(Comparator)`      —— S3/S4 无调用点；`Seq.sort` 已可用，留待需要时补。
 //
 // ⚠️ `collide()` / `updatePhysics()` **不是**未移植项: codegen 生成的 `Groups.update()`
 //   会调用它们（`Groups.bullet.collide()` 等），所以必须有实现 —— 它们委托给
@@ -36,9 +36,11 @@ import type { Entityc } from "../gen/Entityc.js";
 
 /**
  * `QuadTree<T>` 要求 `T extends QuadTree.QuadTreeObject`（含 `hitbox(Rect)`）。
- * Java 侧建筑/子弹/单位实现 `Hitboxc`（含 `hitbox`），TS 侧生成接口在 S3 尚未含该方法，
- * 因此用一个结构化类型桥接。S3 只构造/替换 quadtree（`resize`），从不插入元素，
- * 所以这个桥接不会掩盖任何真实缺失（TODO(S4): `Hitboxc` 移植后替换为真实类型）。
+ * `EntityGroup<T extends Entityc>` 的 `T` 并不**结构性地**保证有 `hitbox`，因此仍用一个
+ * 结构化类型桥接（`Hitboxc` 已在 S4 移植并含 `hitbox(out: any)`，但把 `T` 约束成
+ * `Hitboxc` 会波及 `Groups.*` 的全部实例化，代价大于收益）。
+ * S3 只构造/替换 quadtree（`resize`），从不插入元素；S4 起 `intersect` 的调用方负责保证
+ * 元素确有 `hitbox`（子弹/单位都实现 `Hitboxc`）。
  */
 type TreeObject = { hitbox(out: Rect): void };
 
@@ -54,6 +56,11 @@ export class EntityGroup<T extends Entityc>{
   private map: Map<number, T> | null = null;
   private tree: QuadTree<TreeObject> | null = null;
   private clearing = false;
+
+  /** Java `intersectArray`：收集式 `intersect(x,y,w,h)` 复用的输出缓冲。 */
+  private readonly intersectArray = new Seq<T>();
+  /** Java `intersectRect`：收集式 `intersect` 复用的查询矩形。 */
+  private readonly intersectRect = new Rect();
 
   /**
    * 迭代下标（`remove`/`removeIndex` 会修正它；Java 里是字段而非局部变量）。
@@ -395,6 +402,43 @@ export class EntityGroup<T extends Entityc>{
   }
 
   // ---------------------------------------------------------------- 空间
+
+  /**
+   * 对应 Java `EntityGroup.intersect(float, float, float, float, Boolf<? super T>)`：
+   * 遍历所有可能与本矩形相交的元素，`out` 返回 `true` 时**提前短路**并返回 `true`。
+   *
+   * ⚠️ 重载顺序（重要，见下）: 三条 `intersect` 在 TS 里只能共用一个实现体，靠重载声明区分。
+   * 这里刻意把 **`Boolf` 放前、`Cons` 放后**，以复刻 Java 的重载解析（`void 兼容` vs `值兼容`）：
+   * 有返回值（`boolean`）的回调绑定到 `Boolf`，无返回值的回调（`void`）绑定到 `Cons`。
+   * （arc-ts 的 `QuadTree.intersect` 在 float 形式里是 `Cons` 在前，会让 `Boolf` 形式在类型上
+   * 实际不可达；这里不复刻该缺陷，`QuadTree` 的 `Rect` 形式顺序与此一致。）
+   *
+   * 空组恒返回 `false`（与 Java 一致，且不触碰 quadtree）。
+   */
+  intersect(x: number, y: number, width: number, height: number, out: Boolf<T>): boolean;
+  /**
+   * 对应 Java `EntityGroup.intersect(float, float, float, float, Cons<? super T>)`：
+   * 遍历处理所有可能相交的元素（无返回值、不短路）。
+   */
+  intersect(x: number, y: number, width: number, height: number, out: Cons<T>): void;
+  /**
+   * 对应 Java `EntityGroup.intersect(float, float, float, float)`：把可能相交的元素收集进
+   * 一个**复用**的 `Seq`（Java `intersectArray`，每次调用先 `clear()`）。空组返回空 `Seq`。
+   */
+  intersect(x: number, y: number, width: number, height: number): Seq<T>;
+  intersect(x: number, y: number, width: number, height: number, out?: Boolf<T> | Cons<T>): boolean | void | Seq<T>{
+    if(out === undefined){
+      this.intersectArray.clear();
+      // 空组提前返回，避免触碰 quadtree（Java 原文如此）
+      if(this.isEmpty()) return this.intersectArray;
+      this.treeRef().intersect(this.intersectRect.set(x, y, width, height), this.intersectArray as unknown as Seq<TreeObject>);
+      return this.intersectArray;
+    }
+
+    if(this.isEmpty()) return false;
+    // QuadTree 的谓词式入口返回「是否被 `out` 提前中断」；对 Cons 语义，该返回值由 void 重载忽略。
+    return this.treeRef().intersect(x, y, width, height, out as unknown as Boolf<TreeObject>);
+  }
 
   /** 对应 Java `resize(float, float, float, float)`。 */
   resize(x: number, y: number, w: number, h: number): void{

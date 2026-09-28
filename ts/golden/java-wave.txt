@@ -1,0 +1,9 @@
+# java golden · wave progression
+# world: 32x32 all-air, seed=1, Time.delta=1, canGameOver=false, waveTimer=false
+# spawn: overlay at (2,2); group = dagger x3 every wave, max=100
+# driver: logic.runWave() x3, 130 logic.update() between waves (spawn effects resolve)
+# note: vanilla runWave() spawns scaled by (state.wave - 1), so first recorded wave is 2
+# columns: wave|unitCount|unitTypes(name:count, sorted)
+2|3|dagger:3
+3|6|dagger:6
+4|9|dagger:9

@@ -1,7 +1,7 @@
 // 源: core/src/mindustry/core/Logic.java (627 行)
 //
 // 移植范围（S3 tick 闭环）：`update()` 的 headless 可达主体、`updateEntities()`、
-// `isWaitingWave()`，以及**构造器里 S3 可达的事件监听**。`/triggers`（`Trigger.update` 等）
+// `isWaitingWave()`、`runWave()`（S4 接线），以及**构造器里 S3 可达的事件监听**。`/triggers`（`Trigger.update` 等）
 // 逐点保留。
 //
 // ⚠️ 设计决定（相对 Java 的一处**有意偏离**，必须知道）:
@@ -25,8 +25,9 @@
 //   - `if(Core.settings.modified() && !state.isPlaying()){ netServer.admins.forceSave(); ... }`
 //     —— `netServer` 未移植；且 `MockSettings.modified()` 在 S3 恒为 false → 不可达。
 //   - `state.enemies = Groups.unit.count(u -> u.team()==waveTeam && u.isEnemy())` 的
-//     `isEnemy()` 部分 —— S3 的 `Unit`（最小集）没有该方法；保留 `count` 调用形状、
-//     判据缩到 `u.team === waveTeam.id`。`Groups.unit` 在 S3 恒为空 → 结果恒 0（计划 §9：0 单位）。
+//     `isEnemy()` 部分 —— S4 起 `Groups.unit` 非空，但最小集 `Unit` 没有 `isEnemy()`；
+//     保留 `count` 调用形状、判据缩到 `u.team === waveTeam.id`（`Type.isEnemy` 默认 true 的
+//     单位类型才会被 `waveTeam` 生成 → 不改变 S4 的可观测行为）。
 //   - `MapPreviewLoader.checkPreviews()` —— 地图预览（渲染/UI）。
 //   - `fogControl.update()` —— 战争迷雾；`state.rules.fog` 默认 false → 不可达。
 //   - 两处 `if(state.isCampaign()){ state.rules.sector.info.update(); universe.update(); }` ——
@@ -39,13 +40,18 @@
 //     同一个原因：`Weather` 未移植，最小集 `WeatherStatec` 没有 `weather` 字段，且
 //     `Groups.weather` 恒为空（循环体不执行）。保留 `envAttrs.clear()` 与 `rules.attributes` 并入。
 //   - `for(TeamData data : state.teams.getActive()){ ... fillItems / BaseBuilderAI / RtsAI /
-//     prebuildAi ... }` —— 全部依赖核心物品、AI（S4/S5）与单位（计划 §9「AI/波次不做」）。
-//   - `if(!net.client() && state.wavetime <= 0 && state.rules.waves){ runWave(); }` ——
-//     `state.rules.waves` 默认 false → 不可达；`runWave()` 依赖 `spawner`（S5）。
+//     prebuildAi ... }` —— 全部依赖核心物品、AI（S5）与单位（计划 §9「AI 不做」）。
 //   - `if(runStateCheck){ checkGameState(); }` 与 `else if(netServer.isWaitingForPlayers()...)`
-//     —— `netServer` 未移植；`checkGameState()` 依赖 `CoreBuild`/`Spawner`/`Call`（S4/S5）。
+//     —— `netServer` 未移植；`checkGameState()` 依赖 `CoreBuild`/`Call`（S5）。
 //     `runStateCheck` 在 S3 的取值见 `update()` 内注释。
 //   - 构造器里 11 类事件监听（见构造器注释）—— 其事件类或消费方未移植。
+//
+// ⚠️ S4 已接线的波次路径（**不再是**「未移植」）:
+//   - `Logic.runWave()`（Java `Logic.java:319-325`）—— 方法体收在 `Vars.spawner.runWave()`
+//     （任务书要求 `Spawner` 提供 `runWave()`，Java 把同一段代码放在 `Logic`），本方法转发。
+//   - `update()` 里的 `if(!net.client() && state.wavetime <= 0 && state.rules.waves){ runWave(); }`
+//     （Java `Logic.java:599-601`）—— 已接上。headless 的 S3 场景 `rules.waves===false` →
+//     该分支不可达，S3 快照长度不变（已实测）。
 //
 // 已移植的构造器监听（S3 可达）:
 //   - `WorldLoadEvent`：唯一在 S3 tick 闭环里可达的事件（`World.endMapLoad()` 会 fire）。
@@ -96,24 +102,66 @@ export class Logic{
     );
   }
 
-  /** 对应 Java `updateEntities()`（S3 的 `Groups.*` 大多为空组，见方法内注释）。 */
+  /**
+   * 推进一波。对应 Java `Logic.runWave()`（`Logic.java:319-325`）：
+   *
+   * ```java
+   * public void runWave(){
+   *     spawner.spawnEnemies();
+   *     state.wave++;
+   *     state.wavetime = state.rules.waveSpacing * (state.isCampaign() ? … : 1f);
+   *     Events.fire(new WaveEvent());
+   * }
+   * ```
+   *
+   * ⚠️ 与 Java 的**位置**差异（有意，已在交付报告说明）：任务书要求 `game/Spawner.ts` 提供
+   * `runWave()`，故方法体收在 `Vars.spawner.runWave()`（`game/Spawner.ts`）；本方法转发。
+   * 行为逐行等价（同一段逻辑，只有承载它的人不同）。
+   */
+  runWave(): void{
+    Vars.spawner.runWave();
+  }
+
+  /**
+   * 对应 Java `Logic.updateEntities()`（`Logic.java:475-511`）。
+   *
+   * S4 起改为**逐条照抄 Java 的调用顺序**，不再走 codegen 的 `Groups.update()` 便捷打包。
+   * 原因（两条独立的硬理由）：
+   *  1. **`Groups.update()` 缺调用点** —— 它只做
+   *     `updatePooling + bullet/unit.updatePhysics + all.update + build.update + bullet.collide`，
+   *     漏了 Java 有而 S3 无消费者的 `unit.update()` / `powerGraph.update()` / `bullet.update()`。
+   *     S4 起 `Groups.unit` / `Groups.bullet` 会非空 → 这个省略不再是「语义等价」。
+   *  2. **顺序有语义** —— Java 是 `bullet.update()` 之后才 `bullet.collide()`（用**新**位置
+   *     判定命中）；而 `Groups.update()` 把 `bullet.collide()` 放在了 `build.update()` 之后、
+   *     且没有 `bullet.update()`。若继续用它，子弹会「先碰撞后位移」，逐 tick 行为与原版
+   *     不一致（`ts/golden/java-turret-fire.txt` 会立刻对不上）。
+   *
+   * ⚠️ 不要改回 `Groups.update()`。也不要手改 `gen/Groups.ts`（codegen 产物，会被重生成覆盖）。
+   *
+   * 未移植：Java 的 `if(editor) Groups.unit.update(u -> u.isPlayer() || u.spawnedByCore)`
+   * 分支 —— S4 无编辑器（`state.isEditor()` 恒 false），且 `Unit.isPlayer()` /
+   * `Unit.spawnedByCore` 尚未移植。仅保留不可达的 `else` 分支形状。
+   * `PerfCounter.*` 计时块按文件头说明跳过。
+   */
   updateEntities(): void{
     const editor = Vars.state.isEditor();
 
-    // Java 原文逐行：
-    //   Groups.updatePooling();  Groups.bullet.updatePhysics();  Groups.unit.updatePhysics();
-    //   Groups.player.update();  Groups.effect.update();  if(!editor) Groups.all.update();
-    //   if(!editor) Groups.powerGraph.update();
-    //   if(!editor) Groups.build.update();
-    //   if(!editor){ Groups.bullet.update(); Groups.bullet.collide(); }
-    // TS 的 codegen 产物 `Groups.update()`（`gen/Groups.ts`，**勿改**）已把
-    //   updatePooling + bullet/unit.updatePhysics + all.update + build.update + bullet.collide
-    // 打包为一次调用。S3 中被它省略的 `player/effect/unit/powerGraph/bullet.update`
-    // 对应的组**恒为空**（无单位/玩家/子弹/效果），故语义等价。
-    // S3 无编辑器（`state.isEditor()` 恒 false），editor 分支不可达。
-    if(!editor){
-      Groups.update();
-    }
+    Groups.updatePooling();
+    Groups.bullet.updatePhysics();
+    Groups.unit.updatePhysics();
+    Groups.player.update();
+    Groups.effect.update();
+    if(!editor) Groups.all.update();
+
+    // Java: `if(editor){ … } else { Groups.unit.update(); }` —— editor 分支不可达（见上）。
+    Groups.unit.update();
+
+    if(!editor) Groups.powerGraph.update();
+    if(!editor) Groups.build.update();
+
+    // ⚠️ 顺序关键：`update()` 推进位置/时间在先，`collide()` 按新位置判定命中在后。
+    if(!editor) Groups.bullet.update();
+    if(!editor) Groups.bullet.collide();
   }
 
   /** 对应 Java `update()`（headless 可达主体）。 */
@@ -165,8 +213,13 @@ export class Logic{
             state.wavetime = Math.max(state.wavetime - Time.delta, 0);
           }
         }
-        // Java: if(!net.client() && state.wavetime <= 0 && state.rules.waves){ runWave(); }
-        //       —— rules.waves 默认 false → 不可达；runWave 依赖 spawner（S5），跳过。
+
+        // Java `Logic.java:599-601`: `if(!net.client() && state.wavetime <= 0 && state.rules.waves){ runWave(); }`
+        // S4 已接上。⚠️ headless 的 S3 场景 `state.rules.waves === false` → 本分支不可达，
+        // 因此 S3 的 6 条硬断言与快照长度（15540）不受影响（已实测）。
+        if(!Vars.net.client() && state.wavetime <= 0 && state.rules.waves){
+          this.runWave();
+        }
 
         // 应用天气属性。Java: `Groups.weather.each(w -> state.envAttrs.add(w.weather.attrs, w.opacity));`
         //   —— `Weather`/`WeatherState` 未移植（见文件头「未移植」清单：`updateWeather()` 一条）。

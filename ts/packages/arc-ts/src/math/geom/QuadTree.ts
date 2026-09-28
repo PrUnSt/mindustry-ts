@@ -1,66 +1,10 @@
 // 源: arc-core/src/arc/math/geom/QuadTree.java
-// 迁移说明: 逐字移植。内部存储 Seq<T> 为文件内最小本地实现, 避免依赖 struct 包。
-// TODO: 迁移到 struct 统一实现
+// 迁移说明: 逐字移植。内部存储改用 struct 的正式 Seq<T> (对应 Java 的 new Seq<>(false), 无序),
+// 谓词/回调改用 arc.func 的函数式 Cons<T>/Boolf<T> (经 struct/Funcs 统一入口)。
+// 注: Java 的 Seq.remove(T, boolean) 语义由正式 Seq 的 remove(value, identity) 提供。
 import {Rect} from './Rect';
-
-/** 对应 arc.struct.Seq 的最小本地实现. */
-// TODO: 迁移到 struct 统一实现
-export class Seq<T>{
-    items: T[] = [];
-    size = 0;
-
-    get(i: number): T{
-        return this.items[i];
-    }
-
-    add(t: T): void{
-        if(this.size === this.items.length) this.items.push(t);
-        else this.items[this.size] = t;
-        this.size++;
-    }
-
-    addAll(seq: Seq<T>): void;
-    addAll(array: T[]): void;
-    addAll(a: Seq<T> | T[]): void{
-        if(Array.isArray(a)){
-            for(let i = 0; i < a.length; i++){
-                this.add(a[i]);
-            }
-        }else{
-            for(let i = 0; i < a.size; i++){
-                this.add(a.items[i]);
-            }
-        }
-    }
-
-    remove(obj: T, identity: boolean): boolean{
-        for(let i = 0; i < this.size; i++){
-            if(this.items[i] === obj){
-                this.size--;
-                this.items[i] = this.items[this.size];
-                this.items[this.size] = null as unknown as T;
-                return true;
-            }
-        }
-        return false;
-    }
-
-    clear(): void{
-        this.size = 0;
-    }
-}
-
-/** 对应 arc.func.Boolf (本地最小实现). */
-// TODO: 迁移到 arc.func.Boolf 统一实现
-export interface Boolf<T>{
-    get(t: T): boolean;
-}
-
-/** 对应 arc.func.Cons (本地最小实现). */
-// TODO: 迁移到 arc.func.Cons 统一实现
-export interface Cons<T>{
-    get(t: T): void;
-}
+import {Seq} from '../../struct/Seq';
+import {Cons, Boolf} from '../../struct/Funcs';
 
 /**
  * A basic quad tree.
@@ -75,7 +19,7 @@ export class QuadTree<T extends QuadTree.QuadTreeObject>{
     protected static readonly maxObjectsPerNode = 5;
 
     bounds: Rect;
-    objects = new Seq<T>();
+    objects = new Seq<T>(false);
     botLeft: QuadTree<T> | null = null;
     botRight: QuadTree<T> | null = null;
     topLeft: QuadTree<T> | null = null;
@@ -188,10 +132,10 @@ export class QuadTree<T extends QuadTree.QuadTreeObject>{
         this.leaf = false;
 
         if(this.fillBL === null){
-            this.fillBL = new Seq<T>();
-            this.fillBR = new Seq<T>();
-            this.fillTL = new Seq<T>();
-            this.fillTR = new Seq<T>();
+            this.fillBL = new Seq<T>(false);
+            this.fillBR = new Seq<T>(false);
+            this.fillTL = new Seq<T>(false);
+            this.fillTR = new Seq<T>(false);
         }
         this.fillBL!.clear();
         this.fillBR!.clear();
@@ -337,7 +281,7 @@ export class QuadTree<T extends QuadTree.QuadTreeObject>{
         return this.intersectPred(a.x, a.y, a.width, a.height, second as Cons<T> | Boolf<T>);
     }
 
-    /** 谓词遍历: 处理可能相交的对象; 当 out.get 返回 true 时提前退出并返回 true (Boolf 语义). */
+    /** 谓词遍历: 处理可能相交的对象; 当 out 返回 true 时提前退出并返回 true (Boolf 语义). */
     private intersectPred(x: number, y: number, width: number, height: number, out: Cons<T> | Boolf<T>): boolean{
         if(!this.leaf){
             // 对应 QuadTree.java:262-265: 递归进入的是子节点 (topLeft.intersect(...)), 不是自身
@@ -352,7 +296,7 @@ export class QuadTree<T extends QuadTree.QuadTreeObject>{
         for(let i = 0; i < objects.size; i++){
             const item = objects.items[i];
             this.hitbox(item);
-            if(this.tmp.overlaps(x, y, width, height) && out.get(item)){
+            if(this.tmp.overlaps(x, y, width, height) && out(item)){
                 return true;
             }
         }
@@ -398,7 +342,7 @@ export class QuadTree<T extends QuadTree.QuadTreeObject>{
         for(let i = 0; i < objects.size; i++){
             const item = objects.items[i];
             this.hitbox(item);
-            if(this.tmp.overlaps(x, y, width, height) && out.get(item)){
+            if(this.tmp.overlaps(x, y, width, height) && out(item)){
                 return item;
             }
         }

@@ -8,4 +8,9 @@
 export class Layer{
   /** `Layer.java:39`。 */
   static readonly blockProp = 32;
+  /**
+   * `Layer.java:72`。S1 · 子弹子系统追加（只增不改）：
+   * `BulletType.layer` 的默认值（`BulletType.java:73`）。
+   */
+  static readonly bullet = 100;
 }

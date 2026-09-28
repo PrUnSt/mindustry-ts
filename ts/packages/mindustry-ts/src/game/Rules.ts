@@ -31,6 +31,7 @@ import { Attributes } from "../world/meta/Attributes.js";
 import { MapObjectives } from "../mocks/MapObjectives.js";
 import type { Block } from "../world/Block.js";
 import type { ItemStack } from "../type/ItemStack.js";
+import type { SpawnGroup } from "./Spawner.js";
 
 /** 对应 `mindustry.game.Rules`。 */
 export class Rules{
@@ -184,8 +185,8 @@ export class Rules{
   disableMusic = false;
   /** 音乐音量倍率（最大 1）。 */
   musicVolume = 1;
-  /** 出生布局（`SpawnGroup` 未移植，S5）。 */
-  spawns = new Seq<unknown>();
+  /** 出生布局（`SpawnGroup`，S4 起已移植 —— 见 `game/Spawner.ts`）。 */
+  spawns = new Seq<SpawnGroup>();
   /** 核心初始物品。 */
   loadout = new Seq<ItemStack>();
   /** 天气事件（`WeatherEntry` 未移植，S5）。 */

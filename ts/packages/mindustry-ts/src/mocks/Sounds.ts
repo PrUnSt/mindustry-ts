@@ -64,5 +64,30 @@ export const Sounds = {
   /** `Wall` 字段默认 `lightningSound = Sounds.shootArc`（`Wall.java:23`）。 */
   shootArc: new Sound(nextId++),
   /** `Conveyor` 构造器：`ambientSound = Sounds.loopConveyor`（`Conveyor.java:51`）。 */
-  loopConveyor: new Sound(nextId++)
+  loopConveyor: new Sound(nextId++),
+
+  // ---- S1 · 子弹子系统追加（只增不改）----
+
+  /** `BulletType.healSound` 默认值（`BulletType.java:177`）。 */
+  blockHeal: new Sound(nextId++),
+
+  // ---- S2 · 单位子系统追加（只增不改）。`UnitType` / `Weapon` / `UnitTypes` 的字段默认值需要这些身份 ----
+
+  /** `Weapon.shootSound` 默认值（`Weapon.java:139`）。 */
+  shoot: new Sound(nextId++),
+  /** `UnitTypes.mace` 的武器 `shootSound`（`UnitTypes.java:130`）。 */
+  shootFlame: new Sound(nextId++),
+  /** `UnitType.stepSound` 默认值（`UnitType.java:313`）。 */
+  mechStepSmall: new Sound(nextId++),
+  /** `UnitType.tankMoveSound` 默认值（`UnitType.java:319`）。 */
+  tankMove: new Sound(nextId++),
+  /** `UnitType.mineSound` 默认值（`UnitType.java:394`）。 */
+  loopMineBeam: new Sound(nextId++),
+  /** `UnitType.init()` 按 `hitSize` 选择的死亡音效（`UnitType.java:944-946`）。 */
+  unitExplode1: new Sound(nextId++),
+  unitExplode2: new Sound(nextId++),
+  unitExplode3: new Sound(nextId++),
+  /** `UnitType.init()` 按 `hitSize` 选择的残骸落地音效（`UnitType.java:950`）。 */
+  wreckFall: new Sound(nextId++),
+  wreckFallBig: new Sound(nextId++)
 } as const;

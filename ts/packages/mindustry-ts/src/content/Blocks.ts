@@ -11,7 +11,7 @@
 //   没有与 Java 对齐的保证** —— 后续阶段整体替换本文件时，所有 id 都会回到 Java 序列。
 //   这是一处必须让下游读者知道的偏差；好在当前没有任何「按 id 持久化」的路径（无存档/无网络）。
 //
-// 已迁移的方块（S4 共 15 个）:
+// 已迁移的方块（S4 共 15 个 + S3 防御闭环新增 1 个，合计 16 个）:
 //
 //   ── S3 的 6 个（覆盖 S3 的每一条断言路径）──
 //   air        —— 自举起点（陷阱 #2），`Tile` 构造器与 `Floor` 字段初值都读它，必须是第 0 条
@@ -34,6 +34,11 @@
 //       `Items.getAllOres()` 有真实数据；同时它们**是** `Floor` 子类，进一步压测
 //       `Floor.init()` 与 `Block.attributes`。
 //
+//   ── S3 防御闭环新增的 1 个 ──
+//   duo        —— 「索敌 → 开火造子弹 → 装填」这条闭环的第一个可对拍方块
+//                 （`ts/golden/java-turret-fire.txt`）。它**追加在末尾**，因为块 id 有顺序
+//                 敏感性（`air` 必须是 0）。⚠️ 它的弹药不在 `load()` 里直接绑定，见 `load()` 末尾。
+//
 // 未迁移（按 Java 的区块归类，逐段标注，避免静默丢失）:
 //   - environment 的其余全部：`spawn` / `removeWall` / `removeOre` / `cliff` /
 //     `ConstructBlock` 1..16 / `deepwater` / `water` / `taintedWater` / `tar` / `slag` /
@@ -46,7 +51,10 @@
 //     —— 其中树/巨石/喷口依赖 `Effect` 或 `Prop` 的贴图；`ConstructBlock` 属建造计划系统。
 //   - defense（`Wall.java` 之外的）：`mender` / `mendProjector` / `overdriveProjector` /
 //     `forceProjector` / `shockMine` / … —— 依赖 `PowerGraph` / `ItemModule` / 单位
-//   - defense.turrets：全部炮塔 —— 依赖 `BulletType` / `ItemModule` / `LiquidModule`
+//   - defense.turrets：`duo` 之外的**全部**炮塔（`scatter` / `scorch` / `hail` / …）——
+//     依赖 `BulletType` 子类（`FlakBulletType` / `LaserBulletType` / …）、`LiquidModule`、
+//     电力与 `Consume*`。`duo` 只用到 `ItemTurret` + `ShootAlternate` + `BasicBulletType`
+//     的纯数据子集，因此可以先落地（它也是防御闭环的对拍锚点）。
 //   - distribution 的其余：`junction` / `bridgeConveyor` / `itemBridge` / `phaseConveyor` /
 //     `sorter` / `invertedSorter` / `overflowGate` / `message` / `payloadConveyor` / `duct*` /
 //     `*Router` —— 依赖 `ItemModule` 的更多分支或 `Payload` 体系。
@@ -72,7 +80,11 @@ import { StaticWall } from "../world/blocks/environment/StaticWall.js";
 import { Wall } from "../world/blocks/defense/Wall.js";
 import { Conveyor } from "../world/blocks/distribution/Conveyor.js";
 import { Router } from "../world/blocks/distribution/Router.js";
+import { ItemTurret, ShootAlternate } from "../world/blocks/defense/Turret.js";
+import { Bullets } from "./Bullets.js";
+import { Vars } from "../Vars.js";
 import { Category } from "../type/Category.js";
+import { ContentType } from "../ctype/ContentType.js";
 import { Items } from "./Items.js";
 import { ItemStack } from "../type/ItemStack.js";
 
@@ -108,6 +120,8 @@ export class Blocks{
   static conveyor: Conveyor;
   /** 路由器。 */
   static router: Router;
+  /** 双管炮塔（S3 · 防御闭环的可对拍里程碑，见 `load()` 末尾的注释）。 */
+  static duo: ItemTurret;
 
   /** Java `Blocks` 里的 `int wallHealthMultiplier = 4`（`Blocks.java:1706`）。 */
   private static readonly wallHealthMultiplier = 4;
@@ -194,5 +208,64 @@ export class Blocks{
     Blocks.router = new Router("router");
     Blocks.router.setRequirements(Category.distribution, [new ItemStack(Items.copper, 3)]);
     Blocks.router.buildCostMultiplier = 4;
+
+    // ---- defense.turrets（S3 起只迁 `duo`，见下）----
+    //
+    // ⚠️ **为什么追加在末尾**（本文件的块 id 顺序敏感性）: `Blocks.air` 必须是 `ContentType.block`
+    //    的第 0 条（自举起点，见文件头）。把 `duo` 插到中间会改变其后所有方块的 id。
+    //    本阶段 `duo` 是最后一条，因此无影响；但**这个位置是必须的**，不是随手放的。
+    //
+    // Java: `duo = new ItemTurret("duo"){{ requirements(Category.turret, with(Items.copper, 35));
+    //        ammo(Items.copper, new BasicBulletType(2.5f, 9){{ … }},
+    //             Items.graphite, new BasicBulletType(3.5f, 18){{ … }},
+    //             Items.silicon, new BasicBulletType(3f, 12){{ … }});
+    //        shoot = new ShootAlternate(3.5f); recoils = 2; shootY = 3f; reload = 20f;
+    //        range = 160; shootCone = 15f; health = 250; inaccuracy = 2f; rotateSpeed = 10f;
+    //        researchCostMultiplier = 0.05f; depositCooldown = 2.0f; limitRange(5f); }}`
+    //    （`Blocks.java:3276-3349`）
+    Blocks.duo = new ItemTurret("duo");
+    Blocks.duo.setRequirements(Category.turret, [new ItemStack(Items.copper, 35)]);
+    // Java: `shoot = new ShootAlternate(3.5f);`（双管交替，`Blocks.java:3318`）
+    Blocks.duo.shoot = new ShootAlternate(3.5);
+    Blocks.duo.recoils = 2;
+    // Java: `recoil = 0.5f;`（`Blocks.java:3334`）—— 该字段只被**渲染**读取
+    // （`curRecoil` / `recoilOffset`，见 `Turret.ts:731` 附近的标注），headless 不可观测；
+    // 此处照值填入以免留下「静默的字段不一致」。TS 的 `BaseTurret.recoil` 默认是 `1`。
+    Blocks.duo.recoil = 0.5;
+    Blocks.duo.shootY = 3;
+    Blocks.duo.reload = 20;
+    Blocks.duo.range = 160;
+    Blocks.duo.shootCone = 15;
+    Blocks.duo.health = 250;
+    Blocks.duo.inaccuracy = 2;
+    Blocks.duo.rotateSpeed = 10;
+    Blocks.duo.researchCostMultiplier = 0.05;
+    // Java: `ammoUseEffect = Fx.casing1;` / `coolant = consumeCoolant(0.1f);`
+    //       `coolantMultiplier = 10f;` / `drawer = new DrawTurret(){{ … }}` /
+    //       `shootSound = Sounds.shootDuo;` —— 特效 / 消耗品 / 渲染 / 音频，均未移植（见 Turret.ts 文件头）。
+    // Java: `depositCooldown = 2.0f;` —— `Block.depositCooldown` 字段未移植（`Block.ts` 不在
+    //       本阶段的允许改动范围内）；它只影响「单位向方块倾倒物品」的冷却，headless 不可观测。
+    //
+    // ---- 弹药装配（⚠️ TS 相对 Java 的**结构性补充**，必须知道）----
+    // Java 在这里**内联创建**三种 `BasicBulletType` 并直接写进 `ammoTypes`，所以方块构造完成时
+    // 弹药已绑定。TS 把这三种弹药抽到 `content/Bullets.ts`，而
+    // `ContentLoader.createBaseContent()` **没有**调用 `Bullets.load()`（见该文件 `:215` 原位注释），
+    // 因此本函数执行时 `Bullets.standardCopper` 等**尚为 undefined** → 无法在此直接绑定。
+    // 处置：把绑定登记为**惰性装配**（`ItemTurret.ammoBinder`，见 `Turret.ts` 的
+    // `ItemTurret.ensureAmmoBound()`），在炮塔**首次接收物品**时执行一次 —— 那时弹药一定已就绪
+    // （或由装配器自行创建）。语义与 Java 等价：弹药在首次使用前必已绑定，且只绑定一次。
+    Blocks.duo.ammoBinder = () => {
+      // `Bullets.load()` 未接入 `ContentLoader` → 这里按需补建（空判据保证同一内容实例内只建一次；
+      // 若调用方已自行 `Bullets.load()`，这里直接复用）。
+      if(Vars.content.getBy(ContentType.bullet).isEmpty()){
+        Bullets.load();
+      }
+      Blocks.duo.ammoTypes.set(Items.copper, Bullets.standardCopper);
+      Blocks.duo.ammoTypes.set(Items.graphite, Bullets.standardGraphite);
+      Blocks.duo.ammoTypes.set(Items.silicon, Bullets.standardSilicon);
+      // Java: `limitRange(5f);`（`Blocks.java:3348`）—— 按最终射程重算三种弹药的 `lifetime`。
+      // 数值与 `content/Bullets.ts` 里预先写死的 golden 值一致（175/2.5=70、191/3.5、175/3）。
+      Blocks.duo.limitRange(5);
+    };
   }
 }

@@ -36,5 +36,35 @@ export const Fx = {
   /** `Block.destroyEffect` 默认值（`Block.java:368`）。 */
   dynamicExplosion: new Effect(nextId++),
   /** `Prop` 构造器：`breakEffect = Fx.breakProp`（`Prop.java:16`）。 */
-  breakProp: new Effect(nextId++)
+  breakProp: new Effect(nextId++),
+
+  // ---- S1 · 子弹子系统追加（只增不改）。`BulletType` / `Bullets` 的字段默认值需要这些身份 ----
+
+  /** `BulletType.hitEffect` / `despawnEffect` 默认值（`BulletType.java:75,77`）。 */
+  hitBulletSmall: new Effect(nextId++),
+  /** `duo` 各弹药的 `hitEffect = despawnEffect`（`Blocks.java:3285` 等）。 */
+  hitBulletColor: new Effect(nextId++),
+  /** `BulletType.shootEffect` 默认值（`BulletType.java:79`）。 */
+  shootSmall: new Effect(nextId++),
+  /** `BulletType.smokeEffect` 默认值（`BulletType.java:85`）。 */
+  shootSmallSmoke: new Effect(nextId++),
+  /** `BulletType.healEffect` 默认值（`BulletType.java:253`）。 */
+  healBlockFull: new Effect(nextId++),
+  /** `BulletType.trailEffect` 默认值（`BulletType.java:284`）。 */
+  missileTrail: new Effect(nextId++),
+  /** `scatter` 各弹药的 `hitEffect`（`Blocks.java:3361` 等）。 */
+  flakExplosion: new Effect(nextId++),
+  /** `Bullets.damageLightning.hitEffect`（`Bullets.java:28`）。 */
+  hitLancer: new Effect(nextId++),
+
+  // ---- S2 · 单位子系统追加（只增不改）。`UnitType` / `Weapon` / `UnitTypes` 的字段默认值需要这些身份 ----
+
+  /** `UnitType.fallEffect` / `fallEngineEffect` 默认值（`UnitType.java:329,331`）。 */
+  fallSmoke: new Effect(nextId++),
+  /** `UnitTypes.dagger` 的武器 `ejectEffect`（`UnitTypes.java:112`）。 */
+  casing1: new Effect(nextId++),
+  /** `UnitTypes.mace` 的武器子弹 `shootEffect`（`UnitTypes.java:143`）。 */
+  shootSmallFlame: new Effect(nextId++),
+  /** `UnitTypes.mace` 的武器子弹 `hitEffect`（`UnitTypes.java:144`）。 */
+  hitFlameSmall: new Effect(nextId++)
 } as const;
