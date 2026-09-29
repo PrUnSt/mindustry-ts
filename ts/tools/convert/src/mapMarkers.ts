@@ -9,7 +9,7 @@
  * loading). So we decode the UBJSON structure fully (structure-complete, byte-lossless) and expose a
  * plain JS value; the raw payload is always retained.
  *
- * Every map shipped in `core/assets/maps/**` stores an empty `IntMap` here, i.e. the two bytes `{}`.
+ * Every map shipped in `ts/assets/maps/**` stores an empty `IntMap` here, i.e. the two bytes `{}`.
  */
 
 export type UbjsonValue =

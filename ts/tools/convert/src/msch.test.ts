@@ -4,11 +4,15 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { parseMschMeta } from "./msch.js";
 
-// 地图取自本仓库 `core/assets/maps/default/`（随源码一起克隆，人人可用），
+// 地图取自本仓库 `ts/assets/maps/default/`（随源码一起克隆，人人可用），
 // 故按测试文件自身位置解析仓库根，避免硬编码任何本机绝对路径。
+//
+// ⚠️ 路径演进（前置条件②）：原先指向 `core/assets/maps/`，那是 **Java 原版**的资源目录。
+//   TS 侧依赖 Java 目录意味着「删掉 Java」会连带打断 convert 的验收，所以地图已迁出到
+//   `ts/assets/maps/`。详见 `ts/assets/README.md`。
 const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
 const mapFile = (name: string): string =>
-  join(repoRoot, "core", "assets", "maps", "default", name);
+  join(repoRoot, "ts", "assets", "maps", "default", name);
 
 describe("parseMschMeta", () => {
   it("parses a real campaign map header (archipelago.msav)", () => {

@@ -8,10 +8,14 @@ import { readNewMap, writeNewMap } from "./map.js";
 import { CONTENT_TYPE_NAMES, CONTENT_TYPE_COUNT } from "./contentTypes.js";
 import { parseMarkers, readUbjson } from "./mapMarkers.js";
 
-// Maps ship with the source tree (`core/assets/maps/**`), so we derive the repo root from this file's
+// Maps ship with the source tree (`ts/assets/maps/**`), so we derive the repo root from this file's
 // location instead of hard-coding a machine-specific absolute path.
+//
+// ⚠️ Path migration (prerequisite ②): this used to point at `core/assets/maps/`, i.e. the **Java
+//   original's** asset dir. Depending on a Java-owned path meant "delete Java" would break convert's
+//   verification, so the maps now live under `ts/assets/maps/`. See `ts/assets/README.md`.
 const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
-const mapsRoot = join(repoRoot, "core", "assets", "maps");
+const mapsRoot = join(repoRoot, "ts", "assets", "maps");
 
 function collectMaps(dir: string, out: string[] = []): string[]{
   for(const entry of readdirSync(dir)){
