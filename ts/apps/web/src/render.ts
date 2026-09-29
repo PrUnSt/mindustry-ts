@@ -20,17 +20,38 @@
 //     故屏幕方向 = `(d4x(rot), -d4y(rot))`。
 // ============================================================================
 
-import { ConveyorBuild, RouterBuild, Vars } from "@mindustry-ts/game";
+import { ConveyorBuild, Groups, RouterBuild, Vars } from "@mindustry-ts/game";
 import { DrillBuild } from "@mindustry-ts/game/src/world/blocks/production/Drill.js";
 import { CoreBuild } from "@mindustry-ts/game/src/world/blocks/storage/CoreBlock.js";
+import { GenericCrafterBuild } from "@mindustry-ts/game/src/world/blocks/production/GenericCrafter.js";
+import { ConsumeGeneratorBuild } from "@mindustry-ts/game/src/world/blocks/power/ConsumeGenerator.js";
+import { PowerGeneratorBuild } from "@mindustry-ts/game/src/world/blocks/power/PowerGenerator.js";
 import type { Drill } from "@mindustry-ts/game/src/world/blocks/production/Drill.js";
 import type { ItemModule } from "@mindustry-ts/game";
 
-// ⚠️ 上面两条**深路径导入**的说明（不是随手写的）:
+// ⚠️ 上面几条**深路径导入**的说明（不是随手写的）:
 //   `Build` / `Drill` / `DrillBuild` / `CoreBlock` / `CoreBuild` 尚未从 `@mindustry-ts/game`
 //   的公开入口 `index.ts` 导出（本阶段不修改 `ts/packages/**`）。`package.json` 没有
 //   `exports` 字段，`moduleResolution: bundler` 因此允许按源码路径解析 —— 这是**临时手段**，
 //   已在交付报告里请编排方把这几条补进 `index.ts` 的导出清单，之后应改回包入口导入。
+//   （S7 新增：`GenericCrafterBuild` / `ConsumeGeneratorBuild` / `PowerGeneratorBuild`
+//   同样是深路径 —— 工厂链与电力阶段只把它们加进了 `content/Blocks.ts`，没补 `index.ts`。）
+
+/**
+ * 可渲染的电力节点（`gen/Building.power` 的静态类型是 `any`，这里收窄成结构化类型）。
+ *
+ * ⚠️ 为什么不用 `PowerModule`: 它**已**从包入口导出，但 `getPowerConnections()` 是
+ *   `Building` 的方法 —— 画连线必须同时拿到「建筑」和「模块」，所以建一个「建筑 + 电力」
+ *   的交叉类型比分开传两个参数更不容易传错。
+ *   ⚠️ `power` **可能为 null**（不耗电也不发电的方块，如石墨压机、传送带）—— 判空是必需的。
+ */
+interface Powered{
+  tile: { x: number; y: number };
+  block: { size: number };
+  power: { status: number } | null;
+  getPowerConnections(out: unknown[]): unknown[];
+  pos?(): number;
+}
 
 /** 与 `arc.graphics.Color` 结构兼容（只读 r/g/b/a，均为 0-1）。 */
 interface Rgba{
@@ -112,6 +133,46 @@ const CORE_EDGE = "#171e25";
 const CORE_RIM = "#5fc8b4";
 const CORE_TEXT = "#ddf2ed";
 
+// ---- 工厂 / 电力（S7）----
+//
+// 配色原则同上方：取「原版观感的近似色」。⚠️ 关键是**停机色**与**进度色**必须拉开对比 ——
+// 本阶段最有信息量的一笔就是「一眼看出它停了」，所以停机不靠变暗一点点，而是叠一层压暗。
+
+/** 工厂机体（石墨压机 / 硅冶炼炉）。 */
+const CRAFT_FACE = "#3c424e";
+const CRAFT_EDGE = "#171b21";
+/** 进度环：运转中（琥珀）/ 停机（灰）。 */
+const CRAFT_RING = "#ffb454";
+const CRAFT_RING_IDLE = "#59606b";
+/** 转速齿轮（受 `warmupRef` 控制透明度）。 */
+const CRAFT_GEAR = "#c9ced8";
+/** 停机压暗层。alpha 要够大，否则在深色地板上看不出来。 */
+const CRAFT_DIM = "rgba(8,10,14,0.58)";
+
+/** 燃煤发电机机体 / 火焰。 */
+const GEN_FACE = "#4a3f33";
+const GEN_EDGE = "#211b15";
+const GEN_FLAME = "#ff8a3c";
+const GEN_FLAME_CORE = "#ffe0a3";
+/** 太阳能板机体 / 电池片。 */
+const SOLAR_FACE = "#1d3550";
+const SOLAR_EDGE = "#0a1520";
+const SOLAR_CELL = "#3f7fb8";
+
+/**
+ * 电力连线（RGB 三元组，便于按 `power.status` 插 alpha）。
+ * 「满供亮、不足暗」是本阶段「电网可见」的实现方式：同一条线的 alpha 直接等于覆盖率。
+ */
+const POWER_LINE_RGB = "255,214,92";
+/** 连线的最低可见度 —— 覆盖率 0 时也要能看出「这里有一根线」，否则看不出它属于电网。 */
+const POWER_LINE_MIN_ALPHA = 0.22;
+
+/** 缺电闪电标：完全断电（红）/ 供电不足（琥珀）。 */
+const BOLT_OFF = "#ff5d5d";
+const BOLT_LOW = "#ffb454";
+/** 缺料「⊘」标。 */
+const STARVE_MARK = "#8e95a1";
+
 /** 渲染一帧所需的视图参数。 */
 export interface Viewport{
   /** 单个格子的边长（逻辑像素）。 */
@@ -119,6 +180,12 @@ export interface Viewport{
   /** 鼠标悬停的格子；越界时为 `-1`。 */
   hoverX: number;
   hoverY: number;
+  /**
+   * 当前工具方块的尺寸（1 / 2 / 3）—— 悬停高亮按**占地**画而不只画一格。
+   * ⚠️ 为什么需要它：size 2 的方块按锚点放置，若只高亮 1 格，用户看不出这一笔会铺多大。
+   * 省略时按 1（与 S6 之前的行为一致）。
+   */
+  hoverSize?: number;
 }
 
 /** 本帧统计（给底部状态栏用，避免调用方再遍历一遍世界）。 */
@@ -557,9 +624,391 @@ function drawDrillItems(
   });
 }
 
+// ============================================================================
+// S7：工厂链 + 电力系统
+// ============================================================================
+
+/** 画一个「闪电」多边形（缺电标记）。纯几何，不用字体。 */
+function drawBolt(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, color: string): void{
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(cx + r * 0.34, cy - r);
+  ctx.lineTo(cx - r * 0.46, cy + r * 0.14);
+  ctx.lineTo(cx + r * 0.02, cy + r * 0.14);
+  ctx.lineTo(cx - r * 0.3, cy + r);
+  ctx.lineTo(cx + r * 0.5, cy - r * 0.16);
+  ctx.lineTo(cx - r * 0.02, cy - r * 0.16);
+  ctx.closePath();
+  ctx.fill();
+
+  // 描一圈深色边，免得与机体的深色糊在一起
+  ctx.strokeStyle = "rgba(0,0,0,0.6)";
+  ctx.lineWidth = Math.max(1, r * 0.14);
+  ctx.stroke();
+}
+
+/** 画一个「⊘」（缺料标记）：空心圆 + 斜杠。 */
+function drawSlash(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, color: string): void{
+  ctx.strokeStyle = color;
+  ctx.lineWidth = Math.max(1.4, r * 0.24);
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.stroke();
+
+  const d = r * 0.72;
+  ctx.beginPath();
+  ctx.moveTo(cx - d, cy + d);
+  ctx.lineTo(cx + d, cy - d);
+  ctx.stroke();
+}
+
+/** 一个「停机压暗 + 虚线边框」层。停机状态的最外层视觉，压在机体之上。 */
+function drawStoppedOverlay(
+  ctx: CanvasRenderingContext2D,
+  px: number,
+  py: number,
+  w: number
+): void{
+  ctx.fillStyle = CRAFT_DIM;
+  ctx.fillRect(px, py, w, w);
+
+  ctx.save();
+  ctx.setLineDash([Math.max(2, w * 0.08), Math.max(2, w * 0.07)]);
+  ctx.strokeStyle = "rgba(255,255,255,0.22)";
+  ctx.lineWidth = Math.max(1, w * 0.045);
+  ctx.strokeRect(px + 1, py + 1, w - 2, w - 2);
+  ctx.restore();
+}
+
 /**
- * 渲染整个世界。**按 4 趟遍历** — 顺序即图层（地板 → 方块 → 物品 → 悬停高亮），
+ * 画工厂（`GenericCrafterBuild`：石墨压机 / 硅冶炼炉）。
+ *
+ * 四个元素**全部由真实状态驱动**:
+ *   · 进度环   ← `progressRef`（0..1，≥1 触发 `craft()`）
+ *   · 转速齿轮 ← `warmupRef`（0..1，转速；角度用 `totalProgressRef`，与钻头转子同一思路）
+ *   · 料仓色带 ← `items` 的实际构成（`Item.color`）
+ *   · 停机/缺料/缺电标记 ← `efficiency` / `power.status`
+ *
+ * ⚠️ **「停了」必须一眼看出**（本阶段的核心诉求）:
+ *     `efficiency === 0` → 整体压暗 + 虚线边框 + 进度环转灰；
+ *     再按**停机的原因**分两种标记，缺料与缺电不能长一个样:
+ *       · `power !== null && power.status < 1` → 闪电（红 = 完全断电，琥珀 = 供电不足）
+ *       · 有电但仍停 → 「⊘」缺料
+ *     两台硅冶炼炉并排时，左边转、右边压暗带闪电，对比就出来了。
+ */
+function drawCrafter(
+  ctx: CanvasRenderingContext2D,
+  px: number,
+  py: number,
+  cell: number,
+  w: number,
+  build: GenericCrafterBuild
+): void{
+  // ---- 机体 ----
+  ctx.fillStyle = CRAFT_FACE;
+  ctx.fillRect(px, py, w, w);
+
+  ctx.strokeStyle = CRAFT_EDGE;
+  ctx.lineWidth = Math.max(1, cell * 0.07);
+  ctx.strokeRect(px + 0.5, py + 0.5, w - 1, w - 1);
+
+  const cx = px + w / 2;
+  const cy = py + w / 2;
+
+  const warm = Math.max(0, Math.min(1, build.warmupRef));
+  const prog = Math.max(0, Math.min(1, build.progressRef));
+  const running = build.efficiency > 0;
+  const power = build.power as { status: number } | null;
+
+  // ---- 转速齿轮：6 根辐条，角度 = totalProgressRef；透明度 = warmupRef ----
+  //     冷机时几乎看不见，转起来才亮 —— 与钻头 `drawSpinSprite` 的意图一致。
+  const spin = build.totalProgressRef * 0.12;
+  ctx.globalAlpha = 0.12 + 0.88 * warm;
+  ctx.strokeStyle = CRAFT_GEAR;
+  ctx.lineWidth = Math.max(1.2, cell * 0.075);
+  ctx.lineCap = "round";
+  for(let i = 0; i < 6; i++){
+    const a = spin + (i * Math.PI) / 3;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(a) * w * 0.14, cy + Math.sin(a) * w * 0.14);
+    ctx.lineTo(cx + Math.cos(a) * w * 0.3, cy + Math.sin(a) * w * 0.3);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+
+  // ---- 进度环：progressRef（0..1）----
+  const ringR = w * 0.36;
+  ctx.strokeStyle = "rgba(0,0,0,0.5)";
+  ctx.lineWidth = Math.max(2, cell * 0.13);
+  ctx.beginPath();
+  ctx.arc(cx, cy, ringR, 0, Math.PI * 2);
+  ctx.stroke();
+
+  if(prog > 0){
+    ctx.strokeStyle = running ? CRAFT_RING : CRAFT_RING_IDLE;
+    ctx.lineWidth = Math.max(2, cell * 0.13);
+    ctx.beginPath();
+    ctx.arc(cx, cy, ringR, -Math.PI / 2, -Math.PI / 2 + prog * Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // ---- 料仓色带（底部，按各物品比例）----
+  const inset = Math.max(2, cell * 0.16);
+  const bandH = Math.max(3, cell * 0.22);
+  drawItemBand(
+    ctx,
+    px + inset,
+    py + w - inset - bandH,
+    w - inset * 2,
+    bandH,
+    build.items as ItemModule | null
+  );
+
+  // ---- 停机标记 ----
+  if(!running){
+    drawStoppedOverlay(ctx, px, py, w);
+
+    const markR = w * 0.15;
+    if(power !== null && power.status < 1){
+      // 缺电：闪电。status === 0 是「完全没电」，0 < status < 1 是「供电不足」。
+      drawBolt(ctx, px + w - inset - markR, py + inset + markR, markR, power.status > 0 ? BOLT_LOW : BOLT_OFF);
+    }else{
+      // 有电（或本就不耗电）却停 → 缺料
+      drawSlash(ctx, px + w - inset - markR, py + inset + markR, markR, STARVE_MARK);
+    }
+  }
+}
+
+/**
+ * 画发电机（`PowerGeneratorBuild`：燃煤发电机 / 太阳能板）。
+ *
+ * · 燃煤发电机（`ConsumeGeneratorBuild`）：火焰高度 ← `productionEfficiency`，
+ *   底部燃料条 ← `generateTime`（1 → 0 的燃烧进度），燃料色带 ← `items`（烧的是什么）。
+ * · 太阳能板（`SolarGeneratorBuild`）：电池片网格 + 辉光 ← `productionEfficiency`。
+ * · 两者 `productionEfficiency === 0` 时都压暗 —— 「有电/没电」在光源处就要看得出来。
+ */
+function drawGenerator(
+  ctx: CanvasRenderingContext2D,
+  px: number,
+  py: number,
+  cell: number,
+  w: number,
+  build: PowerGeneratorBuild
+): void{
+  const burner = build instanceof ConsumeGeneratorBuild;
+
+  ctx.fillStyle = burner ? GEN_FACE : SOLAR_FACE;
+  ctx.fillRect(px, py, w, w);
+
+  ctx.strokeStyle = burner ? GEN_EDGE : SOLAR_EDGE;
+  ctx.lineWidth = Math.max(1, cell * 0.08);
+  ctx.strokeRect(px + 0.5, py + 0.5, w - 1, w - 1);
+
+  const cx = px + w / 2;
+  const cy = py + w / 2;
+  const eff = Math.max(0, Math.min(1, build.productionEfficiency));
+
+  if(burner){
+    // ---- 火焰：高度与亮度都 ∝ productionEfficiency ----
+    if(eff > 0){
+      const fh = w * (0.16 + 0.24 * eff);
+      const fw = w * 0.18;
+      ctx.globalAlpha = 0.35 + 0.65 * eff;
+
+      // 外焰
+      ctx.fillStyle = GEN_FLAME;
+      ctx.beginPath();
+      ctx.moveTo(cx - fw, cy + w * 0.16);
+      ctx.lineTo(cx, cy + w * 0.16 - fh);
+      ctx.lineTo(cx + fw, cy + w * 0.16);
+      ctx.closePath();
+      ctx.fill();
+
+      // 内焰（高温核心）
+      ctx.fillStyle = GEN_FLAME_CORE;
+      ctx.beginPath();
+      ctx.moveTo(cx - fw * 0.5, cy + w * 0.16);
+      ctx.lineTo(cx, cy + w * 0.16 - fh * 0.6);
+      ctx.lineTo(cx + fw * 0.5, cy + w * 0.16);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.globalAlpha = 1;
+    }
+
+    // ---- 燃烧进度条：`generateTime` 从 1 递减到 0（一件燃料烧 itemDuration tick）----
+    const gen = build as unknown as { generateTime: number };
+    const burn = Math.max(0, Math.min(1, gen.generateTime));
+    const barW = w * 0.62;
+    const barH = Math.max(2, cell * 0.16);
+    const barX = cx - barW / 2;
+    const barY = py + w - Math.max(3, cell * 0.3) - barH;
+    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    ctx.fillRect(barX, barY, barW, barH);
+    ctx.fillStyle = GEN_FLAME;
+    ctx.fillRect(barX, barY, barW * burn, barH);
+  }else{
+    // ---- 太阳能：2×2 电池片 + 辉光 ----
+    const g = w * 0.1;
+    const cw = (w - g * 3) / 2;
+    for(let i = 0; i < 2; i++){
+      for(let j = 0; j < 2; j++){
+        ctx.fillStyle = SOLAR_CELL;
+        ctx.globalAlpha = 0.28 + 0.72 * eff;
+        ctx.fillRect(px + g + i * (cw + g), py + g + j * (cw + g), cw, cw);
+        ctx.globalAlpha = 1;
+      }
+    }
+    // 满发时的一圈辉光
+    if(eff > 0){
+      ctx.strokeStyle = "rgba(120,190,255," + String(0.15 + 0.5 * eff) + ")";
+      ctx.lineWidth = Math.max(1, cell * 0.06);
+      ctx.strokeRect(px + 1.5, py + 1.5, w - 3, w - 3);
+    }
+  }
+
+  // ---- 燃料 / 停机 ----
+  const fuel = build.items as ItemModule | null;
+  if(burner && fuel !== null && fuel.total() > 0){
+    const inset = Math.max(2, cell * 0.16);
+    const bandH = Math.max(2, cell * 0.16);
+    drawItemBand(ctx, px + inset, py + w - inset - bandH, w - inset * 2, bandH, fuel);
+  }
+
+  if(eff <= 0){
+    drawStoppedOverlay(ctx, px, py, w);
+    drawBolt(ctx, px + w / 2, py + w / 2, w * 0.18, BOLT_OFF);
+  }
+}
+
+/** 建筑占地中心在**屏幕坐标**里的位置（多块结构按 `sizeOffset` 反推）。 */
+function centerOf(
+  build: { tile: { x: number; y: number }; block: { size: number } },
+  height: number,
+  cell: number
+): [number, number]{
+  const rect = footprintRect(build.tile, build.block.size, height, cell);
+  return [rect.px + rect.w / 2, rect.py + rect.w / 2];
+}
+
+/**
+ * 电力连线趟：把**同一张电网**里相邻建筑连起来。
+ *
+ * ⚠️ 为什么不扫 `world.tiles` 而扫 `Groups.build`: 连线是「建筑 ↔ 建筑」的关系，
+ *   按格子扫会重复访问多块结构（`size²` 次）。`Groups.build` 里每个建筑只有一条。
+ *   数据来源是 `Building.getPowerConnections()`（电力系统的**真**连接判据，
+ *   含「两个纯耗电方块互不导通」那条规则），所以画出来的线与模拟看到的电网一致。
+ *
+ * ⚠️ 去重: `getPowerConnections` 是**对称**的（A 能看到 B，B 也能看到 A），
+ *   用打包坐标 `pos()` 的大小关系只画一次，否则每条线会被画两遍（视觉上只是更粗，
+ *   但 alpha 叠加会让「覆盖率」的读数失真）。
+ *
+ * ⚠️ 线色按 `power.status` 取：满供亮、不足暗 —— 「电网」这件事因此在画面上真实可见。
+ */
+function drawPowerLines(ctx: CanvasRenderingContext2D, height: number, cell: number): void{
+  const nodes: Powered[] = [];
+  Groups.build.each((b) => {
+    const p = b as unknown as Powered;
+    if(p.power !== null && p.power !== undefined) nodes.push(p);
+  });
+
+  const conns: unknown[] = [];
+
+  // ---- 连线 ----
+  for(const a of nodes){
+    const [ax, ay] = centerOf(a, height, cell);
+    const aPos = typeof a.pos === "function" ? a.pos() : 0;
+
+    for(const other of a.getPowerConnections(conns)){
+      const b = other as Powered;
+      if(b === null || b === undefined) continue;
+      const bPos = typeof b.pos === "function" ? b.pos() : 0;
+      // 每条线只画一次（见上面的去重说明）
+      if(aPos >= bPos) continue;
+
+      const [bx, by] = centerOf(b, height, cell);
+      // 一条线两端的覆盖率理论上相同（同一张图），取小值以保守表达「不足」
+      const status = Math.max(
+        0,
+        Math.min(1, Math.min(a.power === null ? 0 : a.power.status, b.power === null ? 0 : b.power.status))
+      );
+
+      // 深色底衬：让亮线在浅色地板上也能看清
+      ctx.strokeStyle = "rgba(0,0,0,0.55)";
+      ctx.lineWidth = Math.max(2.5, cell * 0.2);
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(ax, ay);
+      ctx.lineTo(bx, by);
+      ctx.stroke();
+
+      ctx.strokeStyle =
+        "rgba(" + POWER_LINE_RGB + "," +
+        String(POWER_LINE_MIN_ALPHA + (1 - POWER_LINE_MIN_ALPHA) * status) + ")";
+      ctx.lineWidth = Math.max(1.4, cell * 0.11);
+      ctx.beginPath();
+      ctx.moveTo(ax, ay);
+      ctx.lineTo(bx, by);
+      ctx.stroke();
+    }
+  }
+
+  // ---- 节点：每个带电建筑中心一个小方块（颜色同样取覆盖率）----
+  const r = Math.max(1.6, cell * 0.1);
+  for(const a of nodes){
+    const [ax, ay] = centerOf(a, height, cell);
+    const status = Math.max(0, Math.min(1, a.power === null ? 0 : a.power.status));
+    ctx.fillStyle =
+      "rgba(" + POWER_LINE_RGB + "," +
+      String(POWER_LINE_MIN_ALPHA + (1 - POWER_LINE_MIN_ALPHA) * status) + ")";
+    ctx.fillRect(ax - r, ay - r, r * 2, r * 2);
+    ctx.strokeStyle = "rgba(0,0,0,0.6)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(ax - r, ay - r, r * 2, r * 2);
+  }
+}
+
+/** 画工厂**自己库存**里的物品（投入的原料 + 推不出去的产物）。 */
+function drawCrafterItems(
+  ctx: CanvasRenderingContext2D,
+  px: number,
+  py: number,
+  cell: number,
+  w: number,
+  build: GenericCrafterBuild
+): void{
+  const items = build.items as ItemModule | null;
+  if(items === null || items.total() <= 0) return;
+
+  const radius = Math.max(1.6, cell * 0.11);
+  let i = 0;
+  items.each((item) => {
+    const amount = items.get(item);
+    for(let k = 0; k < amount && i < 8; k++, i++){
+      const col = i % 4;
+      const row = Math.trunc(i / 4);
+      ctx.fillStyle = css(item.color);
+      ctx.beginPath();
+      ctx.arc(
+        px + cell * (0.3 + col * 0.14),
+        py + w - cell * (0.42 + row * 0.14),
+        radius,
+        0,
+        Math.PI * 2
+      );
+      ctx.fill();
+      ctx.strokeStyle = "rgba(0,0,0,0.5)";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+  });
+}
+
+/**
+ * 渲染整个世界。**按 5 趟遍历** — 顺序即图层
+ * （地板 → 方块 → 电力连线 → 物品 → 悬停高亮），
  * 分开跑的理由是物品可能略微溢出格子，若与方块同趟会被后画的邻格传送带盖住。
+ * 电力连线单独一趟是因为它要跨格子连接两个建筑，放在方块趟里会被后画的建筑盖掉。
  */
 export function renderWorld(ctx: CanvasRenderingContext2D, view: Viewport): FrameStats{
   const world = Vars.world;
@@ -592,16 +1041,25 @@ export function renderWorld(ctx: CanvasRenderingContext2D, view: Viewport): Fram
     const py = (height - 1 - tile.y) * cell;
     const build = tile.build;
 
-    // 多块结构（钻头 2×2 / 核心 3×3）只在锚点格画一次，矩形按 `sizeOffset` 反推。
-    if(build instanceof DrillBuild || build instanceof CoreBuild){
+    // 多块结构（钻头 2×2 / 核心 3×3 / 工厂 2×2）只在锚点格画一次，矩形按 `sizeOffset` 反推。
+    if(build instanceof DrillBuild || build instanceof CoreBuild || build instanceof GenericCrafterBuild){
       if(!isAnchor(build, tile)) continue;
 
       const rect = footprintRect(tile, block.size, height, cell);
       if(build instanceof DrillBuild){
         drawDrill(ctx, rect.px, rect.py, cell, rect.w, build);
-      }else{
+      }else if(build instanceof CoreBuild){
         drawCore(ctx, rect.px, rect.py, cell, rect.w, build);
+      }else{
+        drawCrafter(ctx, rect.px, rect.py, cell, rect.w, build);
       }
+      stats.builds++;
+    }else if(build instanceof PowerGeneratorBuild){
+      // 发电机：目前只有 size 1（燃煤发电机 / 太阳能板）；仍走 `isAnchor` 判据，
+      // 将来若出现多块发电机，这里不用改。
+      if(!isAnchor(build, tile)) continue;
+      const rect = footprintRect(tile, block.size, height, cell);
+      drawGenerator(ctx, rect.px, rect.py, cell, rect.w, build);
       stats.builds++;
     }else if(build instanceof ConveyorBuild){
       drawConveyor(ctx, px, py, cell, build.rotation);
@@ -614,6 +1072,10 @@ export function renderWorld(ctx: CanvasRenderingContext2D, view: Viewport): Fram
       if(build !== null) stats.builds++;
     }
   }
+
+  // ---- 趟 2.5: 电力连线 ----
+  //     在方块**之后**、物品**之前**: 线要压在机体上才看得见，但不能盖住物品。
+  drawPowerLines(ctx, height, cell);
 
   // ---- 趟 3: 物品 ----
   for(const tile of world.tiles){
@@ -629,6 +1091,10 @@ export function renderWorld(ctx: CanvasRenderingContext2D, view: Viewport): Fram
       drawDrillItems(ctx, rect.px, rect.py, cell, rect.w, build);
       const items = build.items as ItemModule | null;
       if(items !== null) stats.items += items.total();
+    }else if(build instanceof GenericCrafterBuild){
+      if(!isAnchor(build, tile)) continue;
+      const rect = footprintRect(tile, tile.block().size, height, cell);
+      drawCrafterItems(ctx, rect.px, rect.py, cell, rect.w, build);
     }else if(build instanceof ConveyorBuild){
       drawConveyorItems(ctx, px, py, cell, build);
       stats.items += build.len;
@@ -651,12 +1117,13 @@ export function renderWorld(ctx: CanvasRenderingContext2D, view: Viewport): Fram
   }
   ctx.stroke();
 
+  const hoverSize = view.hoverSize === undefined ? 1 : view.hoverSize;
   if(view.hoverX >= 0 && view.hoverX < width && view.hoverY >= 0 && view.hoverY < height){
-    const hx = view.hoverX * cell;
-    const hy = (height - 1 - view.hoverY) * cell;
+    // 高亮按**占地**画（size 2/3 的方块锚点 ≠ 左上角，故复用 `footprintRect`）
+    const rect = footprintRect({ x: view.hoverX, y: view.hoverY }, hoverSize, height, cell);
     ctx.strokeStyle = "rgba(255,255,255,0.85)";
     ctx.lineWidth = 2;
-    ctx.strokeRect(hx + 1, hy + 1, cell - 2, cell - 2);
+    ctx.strokeRect(rect.px + 1, rect.py + 1, rect.w - 2, rect.w - 2);
   }
 
   return stats;

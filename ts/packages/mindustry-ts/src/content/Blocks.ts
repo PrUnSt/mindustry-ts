@@ -107,6 +107,11 @@ import { Items } from "./Items.js";
 import { ItemStack } from "../type/ItemStack.js";
 import { Drill } from "../world/blocks/production/Drill.js";
 import { CoreBlock } from "../world/blocks/storage/CoreBlock.js";
+import { GenericCrafter } from "../world/blocks/production/GenericCrafter.js";
+import { ConsumeGenerator } from "../world/blocks/power/ConsumeGenerator.js";
+import { SolarGenerator } from "../world/blocks/power/SolarGenerator.js";
+import { ConsumeItemFlammable } from "../world/consumers/ConsumeItemFlammable.js";
+import { ConsumeItemExplode } from "../world/consumers/ConsumeItemExplode.js";
 
 /** 对应 `mindustry.content.Blocks`（S3/S4 子集，见文件头）。 */
 export class Blocks{
@@ -146,6 +151,14 @@ export class Blocks{
   static mechanicalDrill: Drill;
   /** 核心（碎片级）—— 物品的最终去处，队伍库存 = `team.data().core().items`。 */
   static coreShard: CoreBlock;
+  /** 石墨压机（C21 · 工厂链；**不耗电**，`Java Blocks.java:1041-1051`）。 */
+  static graphitePress: GenericCrafter;
+  /** 硅冶炼炉（C21 · 工厂链 + 电力；耗电 0.50，`Java Blocks.java:1070-1084`）。 */
+  static siliconSmelter: GenericCrafter;
+  /** 燃煤发电机（C21 · 电力；`Java Blocks.java:2523-2541`）。 */
+  static combustionGenerator: ConsumeGenerator;
+  /** 太阳能板（C21 · 电力；`Java Blocks.java:2619-2623`）。 */
+  static solarPanel: SolarGenerator;
 
   /** Java `Blocks` 里的 `int wallHealthMultiplier = 4`（`Blocks.java:1706`）。 */
   private static readonly wallHealthMultiplier = 4;
@@ -339,5 +352,62 @@ export class Blocks{
     Blocks.coreShard.size = 3;
     Blocks.coreShard.buildCostMultiplier = 2;
     Blocks.coreShard.unitCapModifier = 8;
+
+    // ---- C21 工厂链 + 电力 ----
+    // ⚠️ 注册顺序即 `content.block(id)` 的 id 顺序，**只能在末尾追加**（`air` 必须是 0）。
+
+    // graphite-press：coal×2 → graphite×1，craftTime 90，size 2。
+    // ⚠️ **不声明 consumePower** → `hasPower` 保持 false → 完全不进电力图。
+    //   这是 v7 里唯一不耗电的工厂（其余 siliconSmelter/kiln/melter/pulverizer 全耗电）。
+    Blocks.graphitePress = new GenericCrafter("graphite-press");
+    Blocks.graphitePress.setRequirements(Category.crafting, [
+      new ItemStack(Items.copper, 75),
+      new ItemStack(Items.lead, 30),
+    ]);
+    Blocks.graphitePress.outputItem = new ItemStack(Items.graphite, 1);
+    Blocks.graphitePress.craftTime = 90;
+    Blocks.graphitePress.size = 2;
+    Blocks.graphitePress.hasItems = true;
+    Blocks.graphitePress.consumeItems(new ItemStack(Items.coal, 2));
+
+    // silicon-smelter：coal×1 + sand×2 → silicon×1，craftTime 40，size 2，耗电 0.50。
+    Blocks.siliconSmelter = new GenericCrafter("silicon-smelter");
+    Blocks.siliconSmelter.setRequirements(Category.crafting, [
+      new ItemStack(Items.copper, 30),
+      new ItemStack(Items.lead, 25),
+    ]);
+    Blocks.siliconSmelter.outputItem = new ItemStack(Items.silicon, 1);
+    Blocks.siliconSmelter.craftTime = 40;
+    Blocks.siliconSmelter.size = 2;
+    Blocks.siliconSmelter.hasItems = true;
+    // Java :1079 `hasPower = true;` / :1080 `hasLiquids = false;`
+    // ⚠️ `hasLiquids` 恒 false 与 Java 一致（TS 的 `Block.hasLiquids` 默认就是 false）。
+    Blocks.siliconSmelter.hasPower = true;
+    Blocks.siliconSmelter.consumeItems(
+      new ItemStack(Items.coal, 1),
+      new ItemStack(Items.sand, 2),
+    );
+    Blocks.siliconSmelter.consumePower(0.5);
+
+    // combustion-generator：烧可燃物发电，powerProduction 1.0，一件燃料撑 120 tick。
+    Blocks.combustionGenerator = new ConsumeGenerator("combustion-generator");
+    Blocks.combustionGenerator.setRequirements(Category.power, [
+      new ItemStack(Items.copper, 25),
+      new ItemStack(Items.lead, 15),
+    ]);
+    Blocks.combustionGenerator.powerProduction = 1;
+    Blocks.combustionGenerator.itemDuration = 120;
+    // Java :2536-2537：`consume(new ConsumeItemFlammable()); consume(new ConsumeItemExplode());`
+    Blocks.combustionGenerator.consume(new ConsumeItemFlammable());
+    Blocks.combustionGenerator.consume(new ConsumeItemExplode());
+    Blocks.combustionGenerator.itemDurationMultipliers.put(Items.pyratite, 3);
+
+    // solar-panel：无消耗发电，powerProduction 0.12。
+    Blocks.solarPanel = new SolarGenerator("solar-panel");
+    Blocks.solarPanel.setRequirements(Category.power, [
+      new ItemStack(Items.lead, 10),
+      new ItemStack(Items.silicon, 8),
+    ]);
+    Blocks.solarPanel.powerProduction = 0.12;
   }
 }

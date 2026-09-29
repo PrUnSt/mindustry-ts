@@ -28,13 +28,17 @@
 
 import { Mathf, Interval } from "@mindustry-ts/arc";
 import type { Prov } from "@mindustry-ts/arc";
+import { Consume } from "./consumers/Consume.js";
+import { ConsumeItems } from "./consumers/ConsumeItems.js";
+import { ConsumePower } from "./consumers/ConsumePower.js";
+import { PowerModule } from "./modules/PowerModule.js";
 import { Color } from "../arc-compat/Color.js";
 import { ContentType } from "../ctype/ContentType.js";
 import { UnlockableContent } from "../ctype/UnlockableContent.js";
 import { Vars } from "../Vars.js";
 import { Category } from "../type/Category.js";
 import type { Item } from "../type/Item.js";
-import type { ItemStack } from "../type/ItemStack.js";
+import { ItemStack } from "../type/ItemStack.js";
 import { CacheLayer } from "../mocks/CacheLayer.js";
 import { Fx, Effect } from "../mocks/Fx.js";
 import { Sounds, Sound } from "../mocks/Sounds.js";
@@ -129,21 +133,61 @@ export class Block extends UnlockableContent{
    * 是否有消耗品（`Consume*`）。对应 Java `public boolean hasConsumers`（`Block.java:418`），
    * 由 `Block.init()` 里的 `hasConsumers = consumers.length > 0` 赋值。
    *
-   * ⚠️ S4 有意收窄: `consumeBuilder` / `consumers` 体系未移植（计划 §9）→ 恒为 false。
-   * 这与 Java 在「没有调用任何 `consume(...)`」时的结果一致，且是
-   * `BuildingComp.updateConsumption()` 选择「无消费者快路径」的**唯一**依据。
+   * ⚠️ 它是 `BuildingComp.updateConsumption()` 选择「快路径 / 慢路径」的**唯一**依据：
+   *   · false → 快路径（Java :1952-1957）：`efficiency` 只由 `enabled`/`productionValid()`/
+   *     `shouldConsume()` 三个 bool 决定，**与库存无关**；
+   *   · true  → 慢路径（Java :1967-2010）：`efficiency = min(所有非可选消费者)`。
    */
   hasConsumers = false;
+  /**
+   * 声明期累积的消费者（Java `consumeBuilder`，`Block.java:415` 之前的那份 `Seq`）。
+   * `init()` 会把它固化成下面四个数组并调用每个 `apply(this)`。
+   */
+  consumeBuilder: Consume[] = [];
+  /** 全部消费者（Java `consumers`，`Block.java:415`）。`BuildingComp.consume()` 遍历它扣料。 */
+  consumers: Consume[] = [];
+  /** 可选消费者（Java `optionalConsumers`，:1467）。只影响 `optionalEfficiency`。 */
+  optionalConsumers: Consume[] = [];
+  /** 非可选消费者（Java `nonOptionalConsumers`，:1468）。`efficiency` 的木桶最小值来源。 */
+  nonOptionalConsumers: Consume[] = [];
+  /** 参与每 tick 更新的消费者（Java `updateConsumers`，:1469）。 */
+  updateConsumers: Consume[] = [];
+  /** 唯一的电力消费者（Java `@Nullable ConsumePower consPower`，:421）。无电力时为 null。 */
+  consPower: ConsumePower | null = null;
+  /**
+   * 每种物品「是否被本方块消耗」（Java `public boolean[] itemFilter = {}`，:412）。
+   * 由 `init()` 按 `content.items().size` 分配，**再由 `ConsumeItems.apply()` 填 true**。
+   * `consumesItem(item)` 直接读它。
+   */
+  itemFilter: boolean[] = [];
   /** 是否有液体模块。 */
   hasLiquids = false;
   /** 是否有电力模块。 */
   hasPower = false;
-  /** 是否消耗电力。 */
-  consumesPower = false;
+  /**
+   * 是否消耗电力。
+   *
+   * ⚠️ 默认 **true**（Java `Block.java:53` 的 `public boolean consumesPower = true;`）——
+   *   即「默认参与电力图」，与直觉相反。真正决定有没有电力模块的是 `hasPower`，
+   *   而 `PowerGraph.add()`（`PowerGraph.java:298`）的判据是
+   *   `build.block.consumesPower && build.block.consPower != null` —— 后者才是关键闸门。
+   *   TS 原先写成 false，与 Java 不同；这个差异在 `getPowerConnections()` 的
+   *   「两个纯耗电方块互不导通」判据（BuildingComp.java:1195）里会算错，故对齐为 true。
+   */
+  consumesPower = true;
   /** 是否输出电力。 */
   outputsPower = false;
-  /** 是否连接电力。 */
-  connectedPower = false;
+  /** 是否连接电力（Java `connectedPower = true`，`Block.java:57`）。 */
+  connectedPower = true;
+  /**
+   * 是否能当导线（Java `conductivePower = false`，`Block.java:59`）。
+   * ⚠️ 它是 `getPowerConnections()` 里「两个纯耗电方块互不导通」判据的一部分
+   * （`BuildingComp.java:1195`）—— 置 true 的方块（如 `PowerNode`/`PowerDiode`）
+   * 能让电力穿过耗电方块之间。
+   */
+  conductivePower = false;
+  /** 是否绝缘（Java `insulated = false`，`Block.java:160`）。true 时不向导邻导电。 */
+  insulated = false;
   /** 每种物品的最大携带量。 */
   itemCapacity = 10;
   /** 各物品容量是否互相独立（而非合并为单一总数）。 */
@@ -399,6 +443,56 @@ export class Block extends UnlockableContent{
     this.initBuilding();
     this.selectionSize = 28;
   }
+
+  // ---- 消耗品声明（Java `Block.java:1148-1216`）----
+
+  /**
+   * 注册一个消费者（Java `consume(T)`，:1208-1216）。
+   *
+   * ⚠️ 电力特判（:1210-1212）：**电力消费者只允许有一个**，后声明的会先从 builder 里
+   *    移除先声明的，再覆盖 `consPower`。这条是 Java 原文照搬，别改成「追加」。
+   */
+  consume<T extends Consume>(consume: T): T{
+    if(consume instanceof ConsumePower){
+      this.consumeBuilder = this.consumeBuilder.filter(c => !(c instanceof ConsumePower));
+      this.consPower = consume;
+    }
+    this.consumeBuilder.push(consume);
+    return consume;
+  }
+
+  /** 对应 Java `consumeItem(Item)`（:1188）：消耗 1 个 `item`。 */
+  consumeItem(item: Item): ConsumeItems{
+    return this.consumeItems(new ItemStack(item, 1));
+  }
+
+  /** 对应 Java `consumeItems(ItemStack...)`（:1196）：消耗一份配方。 */
+  consumeItems(...stacks: ItemStack[]): ConsumeItems{
+    return this.consume(new ConsumeItems(stacks));
+  }
+
+  /** 对应 Java `consumePower(float)`（:1161）：每 tick 耗 `powerPerTick` 电（非缓冲型）。 */
+  consumePower(powerPerTick: number): ConsumePower{
+    return this.consume(new ConsumePower(powerPerTick, 0, false));
+  }
+
+  /** 对应 Java `consumePowerBuffered(float)`（:1184）：蓄电池型。 */
+  consumePowerBuffered(powerCapacity: number): ConsumePower{
+    return this.consume(new ConsumePower(0, powerCapacity, true));
+  }
+
+  /**
+   * 分配电力模块（对应 Java `BuildingComp.create()` 里的 `power = new PowerModule()` 两行，
+   * `BuildingComp.java:153-156`）。
+   *
+   * ⚠️ 为什么走工厂而不是在 `BuildingComp` 里直接 `new`：`PowerModule` 是普通类，
+   *    而 **codegen 生成的文件只自动 import「组件接口名 / Groups / 基类名」**，
+   *    `gen/Building.ts` 里写不出 `import { PowerModule }`。这与既有的
+   *    {@link newTimers}（`Interval` 也是 arc 类型）是同一个规避手法。
+   */
+  newPower(): PowerModule{
+    return new PowerModule();
+  }
   /**
    * 对应 Java `Block.initBuilding()`。
    * Java 用反射（`getClass()` / `getDeclaredClasses()`）找内嵌的 `Building` 子类；
@@ -503,12 +597,18 @@ export class Block extends UnlockableContent{
    * @return 该方块是否把 `item` 当作消耗品。对应 Java `consumesItem(Item)`（`Block.java:787`）。
    *
    * ⚠️ 有意收窄（S4）: Java 的实现是 `consumers.length > 0 && Structs.contains(...)`，
-   * 依赖未移植的 `Consume` 体系（计划 §9：不做消耗品）。S4 的方块集合里没有任何
-   * consumer（`Block.hasConsumers` 恒 false），故恒返回 false —— 与 Java 在
-   * 「无消费者」时的结果一致，**不是**静默省略（`hasConsumers` 字段也一并补上并恒为 false）。
+   * C21 起按 Java 原文实现（:787-789）：`return itemFilter[item.id];`
+   *
+   * ⚠️ `itemFilter` 由 `ConsumeItems.apply()` 填 true（`ConsumeItems.java:27`），
+   *    在 `init()` 里 `cons.apply(this)` 那一步完成 —— 所以**只有一个方块声明了
+   *    `consumeItem(...)`，它才会接收该物品**。
+   *
+   * ⚠️ 这条是 `BuildingComp.acceptItem()` 的前半段，也就是
+   *    「传送带能不能把矿投进工厂」的闸门。C21 之前恒 false，导致
+   *    `钻头 → 传送带 → 工厂` 断在最后一米；现在打通。
    */
-  consumesItem(_item: Item): boolean{
-    return false;
+  consumesItem(item: Item): boolean{
+    return this.itemFilter[item.id] === true;
   }
 
   /** 对应 Java `asFloor()`：把本方块视作地板（Java 是 `(Floor)this` 强转）。 */
@@ -706,8 +806,30 @@ export class Block extends UnlockableContent{
 
     this.buildTime *= this.buildCostMultiplier;
 
-    // TODO(S4): consumers / optionalConsumers / nonOptionalConsumers / updateConsumers 数组
-    //           （依赖 Consume* 体系）以及 `content.liquids().size`。
+    // ---- 消耗品体系固化（Java `Block.init()` :1466-1476）----
+    // ⚠️ 顺序敏感：先按 `optional` / `ignore()` / `update` 筛出三个子集，
+    //    **再**统一调 `apply(this)` —— 因为 `ConsumePower.apply` 是唯一把 `hasPower`
+    //    置 true 的地方，而 `hasPower` 又决定 `BuildingComp.create()` 要不要分配
+    //    `PowerModule`。Java 也是这个顺序（:1474-1476 的 for 在数组固化之后）。
+    // ⚠️ `itemFilter` 必须在 `apply(this)` **之前**分配（`ConsumeItems.apply` 要写它），
+    //    与 Java `Block.init():1471` 的顺序一致。
+    this.itemFilter = new Array<boolean>(Vars.content.items().size).fill(false);
+
+    this.consumers = this.consumeBuilder.slice();
+    this.optionalConsumers = this.consumeBuilder.filter(c => c.optional && !c.ignore());
+    this.nonOptionalConsumers = this.consumeBuilder.filter(c => !c.optional && !c.ignore());
+    this.updateConsumers = this.consumeBuilder.filter(c => c.update && !c.ignore());
+    this.hasConsumers = this.consumers.length > 0;
+    for(const cons of this.consumers){
+      cons.apply(this);
+    }
+
+    // Java :1490-1493 —— 非发电机用 buffered 电是配置错误，原版会 warn 后强制关掉。
+    if(!this.outputsPower && this.consPower !== null && this.consPower.buffered){
+      this.consPower.buffered = false;
+    }
+
+    // TODO(S4): `content.liquids().size` 相关的 `liquidFilter` 数组（依赖液体内容表）。
 
     this.setBars();
 

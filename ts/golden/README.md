@@ -56,6 +56,8 @@ env -u http_proxy -u https_proxy ./gradlew :tests:test --tests GoldenExportTest
 | `java-wave.txt` | 波次推进 | `wave\|unitCount\|unitTypes` |
 | `java-drill.txt` | 机械钻采矿（见下） | `tick\|dominantItem\|dominantItems\|progress\|warmup\|lastDrillSpeed\|itemsTotal\|c1len\|c1ys0\|c2len` |
 | `java-core.txt` | 核心入库（见下） | `tick\|copper\|lead\|coreTotal\|acceptCopper\|acceptLead` |
+| `java-crafter.txt` | 石墨压机冶炼（见下） | `tick\|progress\|warmup\|totalProgress\|coal\|graphite\|efficiency\|potentialEfficiency\|shouldConsumePower` |
+| `java-power.txt` | 电力网 coverage（见下） | `tick\|powerNeeded\|powerProduced\|coverage\|efficiency\|genProductionEfficiency\|genCoal\|smelterProgress\|smelterSilicon` |
 
 ### `java-drill.txt`（场景 10）
 
@@ -77,6 +79,61 @@ env -u http_proxy -u https_proxy ./gradlew :tests:test --tests GoldenExportTest
 - `[B]` 容量封顶：先用真实 `handleItem` 把 copper 填满到 `storageCapacity=4000`，再验证额外 `handleItem` 被焚烧（不再入账）、
   `acceptItem(copper)=false`、且封顶是**按物品类型**的（lead 仍可入库）、被拒的 copper 堵在传送带末端。
 - `copper`/`lead`/`coreTotal` 是整数严格相等；`acceptCopper`/`acceptLead` 是 `CoreBuild.acceptItem(null, item)` 的布尔值。
+
+### `java-crafter.txt`（场景 12 · 工厂冶炼）
+
+`graphite-press`（`GenericCrafter`，size=2、`craftTime=90f`、`consumeItem(coal, 2)`、`outputItem=graphite×1`、
+`itemCapacity=10`）孤立放置在 24×24 all-air 世界里 —— **四周没有邻居**，所以 `craft()` 里的
+`offload(graphite)` 会退回 `items.add`，产物留在自己库存里可见。
+
+⚠️ **本文件的重点是 `updateConsumption()` 的慢路径**：`consumeItem` 让 `block.hasConsumers == true`，
+于是 `efficiency` 走 `BuildingComp.updateConsumption()` 的慢分支：
+
+```
+efficiency          = min(所有非可选消费者) = ConsumeItems.efficiency = items.has(coal,2) ? 1 : 0
+potentialEfficiency = efficiency 在「未被 shouldConsume() 清零之前」的值
+shouldConsumePower  = false ⟺ 某个**非电力**消费者 efficiency <= 1e-7
+```
+
+最后一条正是「缺料工厂不计入电网负荷」的判据：`PowerGraph.getPowerNeeded()` 会跳过 `shouldConsumePower == false` 的消费者。
+对照：**缺电**不算缺料 —— 孤立冶炼炉 `shouldConsumePower` 仍为 `true`，照旧计入需求（见 `java-power.txt` `[1]`）。
+
+- 该方块**没有** `consumePower` → `hasPower=false`、`consPower=null`、`power` 模块是 null，**不要**读它的 `power`。
+- `[A]` coal=20：progress `1/90` 每 tick → 第 90、180 tick 各一次 `craft()`（每次 coal -2、graphite +1）。
+- `[B]` coal=1（需要 2）：`efficiency=potentialEfficiency=0`、`shouldConsumePower=false`，progress/warmup 恒为 0，coal 永不消耗。
+- `[probe]` 末尾的独立小节：直接调一次 `updateConsumption()`，列是 `coal|efficiency|potentialEfficiency|shouldConsumePower`，
+  两行分别对应 coal=1 与 coal=2。
+- `coal`/`graphite` 整数严格相等；其余浮点列（`progress`/`warmup`/`totalProgress`/`efficiency`/`potentialEfficiency`）带 `1e-4` 容差。
+
+### `java-power.txt`（场景 13 · 电力网 coverage）
+
+`combustion-generator`（size=1、`powerProduction=1f`、`itemDuration=120f`、`consume(ConsumeItemFlammable)`）给
+`silicon-smelter`（size=2、`consumePower(0.50f)`、`craftTime=40`、`consumeItems(coal 1, sand 2)`、`outputItem=silicon×1`）供电。
+冶炼炉**预先上好料**，于是 min(消费者) 里唯一可能掉下来的就是 `ConsumePower.efficiency == power.status`，
+`efficiency` 列可直接当作 coverage 的镜像来断言。
+
+原版公式（TS 侧要逐条复刻）：
+
+```
+getPowerNeeded()   = Σ_consumers (consPower.requestedPower(c) * c.delta())   // 只数 shouldConsumePower 的
+getPowerProduction()= enabled ? powerProduction * productionEfficiency : 0   // coal.flammability=1 -> prodEff = efficiency
+getPowerProduced() = Σ_producers (getPowerProduction() * delta())
+coverage           = zero(needed)&&zero(produced) ? 0 : zero(needed) ? 1 : min(1, produced/needed)
+每个非 buffered 消费者的 power.status = coverage
+```
+
+- ⚠️ 驱动方式：`PowerGraph.update()` 由 `Logic.updateEntities()` 里的 `Groups.powerGraph.update()` 驱动，且排在 `Groups.build.update()` **之前**。
+  所以每 tick 是「电网先结算 → 方块随后用这个 coverage 更新」。这导致 tick 1 的 `powerNeeded` 仍是 `0.0`
+  （此时 building 还没跑过 `updateConsumption()`，`shouldConsumePower` 仍是初始 `false`），tick 2 起才是稳态值。
+- ⚠️ `Block.conductivePower` 默认 **false**：冶炼炉之间彼此不导通，`[3]` 必须用 `powerNode` 竖链（6,5)..(6,10) 把它们串进同一张图。
+  powerNode 是 `consumesPower=false, outputsPower=false`，因此**按邻接就导通**且自己不进 producers/consumers。
+- `[1]` 孤立冶炼炉：produced=0 < needed=0.5 → coverage/efficiency 恒 0，**120 tick 内一个 silicon 都没产出**（coal/sand 保持 10）。
+- `[2]` 一台机供一个炉：produced=1、needed=0.5 → coverage=1，每 40 tick 一个 silicon（第 42 tick 首次入账）。
+- `[3]` 一台机供三个炉：produced=1、needed=1.5 → coverage=`min(1, 1/1.5)`=`0.6666667`，**图中每个消费者 status 都是它**；
+  效率折半后 `40/0.6666667 = 60` tick 一个 silicon（第 62 tick 首次入账）。
+- `powerNeeded`/`powerProduced` 是**图级**量（`getLastPowerNeeded()`/`getLastPowerProduced()`）；`coverage` 是被观测炉子的 `power.status`。
+- 没有发电机的子场景里，`genProductionEfficiency`/`genCoal` 两列写 `null`（与 `java-drill.txt` 的 `c1ys0` 同约定）。
+- 浮点列带 `1e-4` 容差；`genCoal`/`smelterSilicon` 整数严格相等。
 
 ## 铁律
 

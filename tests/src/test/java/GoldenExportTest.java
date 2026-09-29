@@ -38,6 +38,8 @@ import mindustry.world.*;
 import mindustry.world.blocks.distribution.Conveyor.ConveyorBuild;
 import mindustry.world.blocks.distribution.Router.RouterBuild;
 import mindustry.world.blocks.production.Drill.DrillBuild;
+import mindustry.world.blocks.production.GenericCrafter.GenericCrafterBuild;
+import mindustry.world.blocks.power.ConsumeGenerator.ConsumeGeneratorBuild;
 import mindustry.world.blocks.storage.CoreBlock.CoreBuild;
 import mindustry.world.blocks.defense.turrets.*;
 import org.junit.jupiter.api.*;
@@ -108,6 +110,25 @@ public class GoldenExportTest{
         return (CoreBuild)tile.build;
     }
 
+    /** 放任意方块（电力场景里用于 powerNode 这种「不需要持有 build 引用」的导体）。 */
+    static void putBlock(Block block, int x, int y, int rot){
+        world.tile(x, y).setBlock(block, Team.sharded, rot);
+    }
+
+    /** 放一个 GenericCrafter（`graphite-press` / `silicon-smelter` 都是它）。 */
+    static GenericCrafterBuild putCrafter(Block block, int x, int y, int rot){
+        Tile tile = world.tile(x, y);
+        tile.setBlock(block, Team.sharded, rot);
+        return (GenericCrafterBuild)tile.build;
+    }
+
+    /** 放一个 ConsumeGenerator（`combustion-generator`）。 */
+    static ConsumeGeneratorBuild putConsumeGenerator(Block block, int x, int y, int rot){
+        Tile tile = world.tile(x, y);
+        tile.setBlock(block, Team.sharded, rot);
+        return (ConsumeGeneratorBuild)tile.build;
+    }
+
     /**
      * 铺铜矿 overlay。`countOre` 走的是 `tile.getLinkedTilesAs(block, ...)`，
      * 即方块 2×2 覆盖区（sizeOffset=0 时就是主格与 +x/+y 三格），所以必须铺满整个覆盖区。
@@ -146,6 +167,49 @@ public class GoldenExportTest{
           .append(core.items.total()).append('|')
           .append(core.acceptItem(null, Items.copper)).append('|')
           .append(core.acceptItem(null, Items.lead)).append('\n');
+    }
+
+    /**
+     * 冶炼场景共用的 9 列行。
+     * ⚠️ `graphite-press` 没有 `consumePower` → `hasPower=false`、`power` 模块为 null，这里**不能**碰 `c.power`。
+     * `efficiency`/`potentialEfficiency`/`shouldConsumePower` 则是每个 Building 都有的字段。
+     */
+    static void appendCrafterRow(StringBuilder sb, int t, GenericCrafterBuild c){
+        sb.append(t).append('|')
+          .append(c.progress).append('|')
+          .append(c.warmup).append('|')
+          .append(c.totalProgress).append('|')
+          .append(c.items.get(Items.coal)).append('|')
+          .append(c.items.get(Items.graphite)).append('|')
+          .append(c.efficiency).append('|')
+          .append(c.potentialEfficiency).append('|')
+          .append(c.shouldConsumePower).append('\n');
+    }
+
+    /**
+     * 电力场景共用的 9 列行。`gen == null` 表示「该子场景没有发电机」，两列写 `null`（与 drill 的 c1ys0 同约定）。
+     * powerNeeded/powerProduced 取自耗电方块所在的 PowerGraph（**图级**量）；
+     * coverage 就是该耗电方块的 `power.status`（图中每个非 buffered 消费者的 status 都被写成同一个 coverage）。
+     */
+    static void appendPowerRow(StringBuilder sb, int t, Building consumer, ConsumeGeneratorBuild gen){
+        sb.append(t).append('|')
+          .append(consumer.power.graph.getLastPowerNeeded()).append('|')
+          .append(consumer.power.graph.getLastPowerProduced()).append('|')
+          .append(consumer.power.status).append('|')
+          .append(consumer.efficiency).append('|');
+        if(gen == null){
+            sb.append("null|null|");
+        }else{
+            sb.append(gen.productionEfficiency).append('|').append(gen.items.get(Items.coal)).append('|');
+        }
+        sb.append(((GenericCrafterBuild)consumer).progress).append('|')
+          .append(consumer.items.get(Items.silicon)).append('\n');
+    }
+
+    /** 给硅冶炼炉上好料：`consumeItems(coal 1, sand 2)` → 唯一限制因素变成电力。 */
+    static void stock(GenericCrafterBuild smelter){
+        smelter.items.add(Items.coal, 10);
+        smelter.items.add(Items.sand, 10);
     }
 
     static String itemName(Item item){
@@ -743,5 +807,226 @@ public class GoldenExportTest{
           .append(" with ys=").append(inB.len > 0 ? inB.ys[0] : -1f).append('\n');
 
         write("java-core.txt", sb.toString());
+    }
+
+    // -------------------------------------------------------------------------------------
+    // 工厂冶炼 / 电力（GenericCrafter 的 efficiency 慢路径 + PowerGraph 的 coverage）
+    // -------------------------------------------------------------------------------------
+
+    /**
+     * 场景 12：石墨压机（GenericCrafter，**不耗电**）。
+     * 对应 TS 侧「GenericCrafter / GenericCrafterBuild」：TS 需要复刻 updateTile 的
+     * progress/warmup/totalProgress 累积、满进度 craft()、以及 **`updateConsumption()` 的慢路径**。
+     *
+     * ⚠️ 这是本场景的重点：`consumeItem(coal, 2)` 使 `block.hasConsumers == true`，
+     *    于是走 `BuildingComp.updateConsumption()` 的**慢路径**（而不是 `efficiency = shouldConsume() ? 1 : 0`）：
+     *      efficiency = min(所有非可选消费者) = ConsumeItems.efficiency = items.has(coal, 2) ? 1 : 0
+     *      potentialEfficiency = efficiency（未被 `shouldConsume()` 清零的那个值）
+     *      shouldConsumePower = false ⟺ 某个「非电力」消费者 efficiency <= 1e-7
+     *      —— 这条正是「缺料工厂不计入电网负荷」的判据（PowerGraph.getPowerNeeded 跳过它）。
+     *
+     * 方块：`Blocks.graphitePress`，size=2、craftTime=90f、outputItem=graphite×1、
+     *      itemCapacity=10、**没有 consumePower**（→ hasPower=false、power == null）。
+     * 布局：24x24 all-air；压机在 (5,5)，footprint (5,5)-(6,6)，**四周是 air** → proximity 为空，
+     *      所以 `craft()` 里的 `offload(graphite)` 走 fallen-back 的 `items.add`，产物留在自己库存里。
+     *
+     * 三条子场景（同一份 9 列）：
+     *  [A] coal=20（充足）：1/90 每 tick → 约每 90 tick 一次 craft()，覆盖 ≥2 次。
+     *  [B] coal=1（不足，need 2）：efficiency=potentialEfficiency=0、progress 恒 0、shouldConsumePower=false。
+     *  [probe] 直接调 `updateConsumption()` 一次，对照 coal=1 / coal=2 的 shouldConsumePower。
+     */
+    @Test
+    void exportCrafter() throws IOException{
+        StringBuilder sb = new StringBuilder();
+        sb.append("# java golden · graphite press (GenericCrafter, no power)\n");
+        sb.append("# world: 24x24 all-air, seed=1, Time.delta=1, waves=false, canGameOver=false\n");
+        sb.append("# block: graphite-press @ (5,5) size=2 team=sharded, footprint (5,5)-(6,6), neighbours=(none)\n");
+        sb.append("#   craftTime=90f, consumeItem(coal,2), outputItem=graphite x1, itemCapacity=10\n");
+        sb.append("#   NO consumePower -> hasPower=false, consPower=null, power module is null\n");
+        sb.append("# efficiency: block.hasConsumers=true -> BuildingComp.updateConsumption() SLOW PATH:\n");
+        sb.append("#   efficiency = min(nonOptionalConsumers) = ConsumeItems.efficiency = items.has(coal,2) ? 1 : 0\n");
+        sb.append("#   potentialEfficiency = efficiency before shouldConsume() zeroes it\n");
+        sb.append("#   shouldConsumePower = false iff some non-power consumer has efficiency <= 1e-7\n");
+        sb.append("# columns: tick|progress|warmup|totalProgress|coal|graphite|efficiency|potentialEfficiency|shouldConsumePower\n");
+        sb.append("#   progress is the RAW field (not clamped); warmup creeps to 1 at 0.019/tick; totalProgress += warmup*delta\n");
+
+        // ---- [A] 原料充足：覆盖 ≥2 次 craft() ----
+        createWorld(24, 24, 1);
+        state.rules.waves = false;
+        state.rules.canGameOver = false;
+        GenericCrafterBuild pressA = putCrafter(Blocks.graphitePress, 5, 5, 0);
+        pressA.items.add(Items.coal, 20);
+
+        sb.append("# [A] coal=20 (need 2 per craft): 1/90 progress per tick -> craft() around tick 90 and tick 180\n");
+        sb.append("#     isolated -> craft()'s offload(graphite) falls back to items.add, so the output stays visible\n");
+        int firstOut = -1, secondOut = -1;
+        for(int t = 0; t <= 200; t++){
+            int g = pressA.items.get(Items.graphite);
+            if(firstOut < 0 && g >= 1) firstOut = t;
+            if(secondOut < 0 && g >= 2) secondOut = t;
+            appendCrafterRow(sb, t, pressA);
+            if(t < 200) logic.update();
+        }
+        sb.append("# [A] graphite reached 1 @ tick ").append(firstOut).append(", 2 @ tick ").append(secondOut)
+          .append("; coal left @ tick 200 = ").append(pressA.items.get(Items.coal))
+          .append(" (2 consumed per craft), graphite = ").append(pressA.items.get(Items.graphite)).append('\n');
+        sb.append("#\n");
+
+        // ---- [B] 原料不足：coal=1 < 2 ----
+        createWorld(24, 24, 1);
+        state.rules.waves = false;
+        state.rules.canGameOver = false;
+        GenericCrafterBuild pressB = putCrafter(Blocks.graphitePress, 5, 5, 0);
+        pressB.items.add(Items.coal, 1);
+
+        sb.append("# [B] coal=1 (need 2): ConsumeItems.efficiency=0 -> efficiency=potentialEfficiency=0,\n");
+        sb.append("#     progress never grows, warmup stays at 0 (no updateTile ramp), coal is never consumed\n");
+        for(int t = 0; t <= 120; t++){
+            appendCrafterRow(sb, t, pressB);
+            if(t < 120) logic.update();
+        }
+        sb.append("# [B] @ tick 120: coal=").append(pressB.items.get(Items.coal))
+          .append(" (unchanged), graphite=").append(pressB.items.get(Items.graphite))
+          .append(", progress=").append(pressB.progress)
+          .append(", shouldConsumePower=").append(pressB.shouldConsumePower)
+          .append(" -> a starved factory is NOT counted by PowerGraph.getPowerNeeded()\n");
+        sb.append("#\n");
+
+        // ---- [probe] 单独导出一次 updateConsumption() 之后的 shouldConsumePower ----
+        createWorld(24, 24, 1);
+        state.rules.waves = false;
+        state.rules.canGameOver = false;
+        GenericCrafterBuild pressP = putCrafter(Blocks.graphitePress, 5, 5, 0);
+
+        sb.append("# [probe] one-shot shouldConsumePower after a single updateConsumption()\n");
+        sb.append("# columns: coal|efficiency|potentialEfficiency|shouldConsumePower\n");
+        pressP.items.add(Items.coal, 1);
+        pressP.updateConsumption();
+        sb.append(pressP.items.get(Items.coal)).append('|')
+          .append(pressP.efficiency).append('|')
+          .append(pressP.potentialEfficiency).append('|')
+          .append(pressP.shouldConsumePower).append("  # coal=1 < 2 -> not enough input\n");
+        pressP.items.add(Items.coal, 1);
+        pressP.updateConsumption();
+        sb.append(pressP.items.get(Items.coal)).append('|')
+          .append(pressP.efficiency).append('|')
+          .append(pressP.potentialEfficiency).append('|')
+          .append(pressP.shouldConsumePower).append("  # coal=2 -> enough input\n");
+
+        write("java-crafter.txt", sb.toString());
+    }
+
+    /**
+     * 场景 13：电力网 combustion-generator → 耗电方块。
+     * 对应 TS 侧「PowerGraph / coverage」：TS 需要复刻
+     *   getPowerNeeded  = Σ OverGraph consumers of (consPower.requestedPower(c) * c.delta()) —— **只数 shouldConsumePower 的**
+     *   getPowerProduced = Σ producers of (getPowerProduction() * delta())
+     *   coverage = distributePower 的 `zero(needed) && zero(produced) ? 0 : zero(needed) ? 1 : min(1, produced/needed)`
+     *   consumer.power.status = coverage（非 buffered 消费者）
+     * 以及 `getPowerProduction() = enabled ? powerProduction * productionEfficiency : 0`。
+     *
+     * 耗电方块统一用 `Blocks.siliconSmelter`（consumePower 0.50f、craftTime=40、
+     * consumeItems(coal 1, sand 2)、outputItem=silicon×1、size=2），并**提前上好料**——
+     * 这样 min(消费者) 里唯一可能掉下来的就是 ConsumePower.efficiency == power.status，
+     * 于是 `efficiency` 直接读作 coverage，方便 TS 侧钉死。
+     *
+     * ⚠️ 电网怎么驱动：`PowerGraph.update()` 由 `Logic.updateEntities()` 里的 `Groups.powerGraph.update()`
+     *    驱动（在 `Groups.build.update()` **之前**），所以每 tick 观测到的是「本 tick 电网先结算、方块随后用这个 coverage 更新」。
+     * ⚠️ `Block.conductivePower` 默认 **false**：硅冶炼炉之间彼此不导通，必须各自贴到 generator / powerNode 上。
+     *    powerNode 是 `consumesPower=false, outputsPower=false`，因此**按邻接就能导通**（不作为 producer/consumer 计数）。
+     *
+     * 三条子场景（同一份 9 列）：
+     *  [1] 孤立冶炼炉（无发电机）→ produced=0 < needed=0.5 → coverage=0、efficiency=0、**不产出**
+     *  [2] 一台发电机供一个炉子 → produced=1、needed=0.5 → coverage=1
+     *  [3] 一台发电机供三个炉子 → produced=1、needed=1.5 → coverage=1/1.5=0.6666667
+     */
+    @Test
+    void exportPower() throws IOException{
+        StringBuilder sb = new StringBuilder();
+        sb.append("# java golden · power grid (combustion-generator -> silicon-smelter)\n");
+        sb.append("# world: 24x24 all-air, seed=1, Time.delta=1, waves=false, canGameOver=false\n");
+        sb.append("# generator: combustion-generator size=1 powerProduction=1f itemDuration=120f consume(ConsumeItemFlammable)\n");
+        sb.append("#   getPowerProduction() = powerProduction * productionEfficiency; coal.flammability=1f -> prodEff=efficiency\n");
+        sb.append("# consumer: silicon-smelter size=2 consumePower(0.50f) craftTime=40 outputItem=silicon x1,\n");
+        sb.append("#   consumeItems(coal 1, sand 2) -- pre-stocked so power is the ONLY limiting factor\n");
+        sb.append("# driver: logic.update() -> updateEntities() -> Groups.powerGraph.update() BEFORE Groups.build.update()\n");
+        sb.append("# note: Block.conductivePower defaults to false -> smelters do NOT conduct to each other;\n");
+        sb.append("#       powerNode (consumesPower=false, outputsPower=false) conducts by adjacency without being counted\n");
+        sb.append("# columns: tick|powerNeeded|powerProduced|coverage|efficiency|genProductionEfficiency|genCoal|smelterProgress|smelterSilicon\n");
+        sb.append("#   powerNeeded/powerProduced are PowerGraph-level (getLastPowerNeeded/getLastPowerProduced)\n");
+        sb.append("#   coverage == the observed consumer's power.status; the two generator columns are null when there is no generator\n");
+
+        // ---- [1] 无发电机：孤立耗电方块 ----
+        createWorld(24, 24, 1);
+        state.rules.waves = false;
+        state.rules.canGameOver = false;
+        GenericCrafterBuild solo = putCrafter(Blocks.siliconSmelter, 5, 5, 0);
+        stock(solo);
+
+        sb.append("# [1] isolated smelter @ (5,5), no generator: needed=0.5 produced=0 -> coverage=0, efficiency=0, no output\n");
+        for(int t = 0; t <= 120; t++){
+            appendPowerRow(sb, t, solo, null);
+            if(t < 120) logic.update();
+        }
+        sb.append("# [1] @ tick 120: silicon=").append(solo.items.get(Items.silicon))
+          .append(" coal=").append(solo.items.get(Items.coal))
+          .append(" sand=").append(solo.items.get(Items.sand))
+          .append(" -> efficiency stayed 0, nothing was ever crafted\n");
+        sb.append("#\n");
+
+        // ---- [2] 一台发电机供一个 0.5 耗电方块 ----
+        createWorld(24, 24, 1);
+        state.rules.waves = false;
+        state.rules.canGameOver = false;
+        ConsumeGeneratorBuild gen2 = putConsumeGenerator(Blocks.combustionGenerator, 5, 5, 0);
+        GenericCrafterBuild sm2 = putCrafter(Blocks.siliconSmelter, 6, 5, 0);
+        gen2.items.add(Items.coal, 60);
+        stock(sm2);
+
+        sb.append("# [2] generator @ (5,5) + smelter @ (6,5): produced=1 needed=0.5 -> coverage=min(1, 1/0.5)=1\n");
+        for(int t = 0; t <= 120; t++){
+            appendPowerRow(sb, t, sm2, gen2);
+            if(t < 120) logic.update();
+        }
+        sb.append("# [2] @ tick 120: silicon=").append(sm2.items.get(Items.silicon))
+          .append(" coal=").append(sm2.items.get(Items.coal))
+          .append(" sand=").append(sm2.items.get(Items.sand))
+          .append("; generator coal=").append(gen2.items.get(Items.coal))
+          .append(" -> full-speed crafting: one silicon every 40 ticks\n");
+        sb.append("#\n");
+
+        // ---- [3] 供电不足：一台发电机供三个 0.5 耗电方块（总需求 1.5）----
+        createWorld(24, 24, 1);
+        state.rules.waves = false;
+        state.rules.canGameOver = false;
+        ConsumeGeneratorBuild gen3 = putConsumeGenerator(Blocks.combustionGenerator, 5, 5, 0);
+        // powerNode 竖链 (6,5)-(6,10)：把 generator 与三个互不导通的冶炼炉串进同一张图
+        for(int y = 5; y <= 10; y++){
+            putBlock(Blocks.powerNode, 6, y, 0);
+        }
+        GenericCrafterBuild sm3a = putCrafter(Blocks.siliconSmelter, 7, 5, 0);
+        GenericCrafterBuild sm3b = putCrafter(Blocks.siliconSmelter, 7, 7, 0);
+        GenericCrafterBuild sm3c = putCrafter(Blocks.siliconSmelter, 7, 9, 0);
+        gen3.items.add(Items.coal, 60);
+        stock(sm3a);
+        stock(sm3b);
+        stock(sm3c);
+
+        sb.append("# [3] generator @ (5,5) + powerNode chain (6,5)..(6,10) + smelters @ (7,5),(7,7),(7,9)\n");
+        sb.append("#     produced=1 needed=1.5 -> coverage=min(1, 1/1.5)=0.6666667 for EVERY consumer in the graph\n");
+        for(int t = 0; t <= 120; t++){
+            appendPowerRow(sb, t, sm3a, gen3);
+            if(t < 120) logic.update();
+        }
+        sb.append("# [3] @ tick 120: smelter(7,5) silicon=").append(sm3a.items.get(Items.silicon))
+          .append(" coal=").append(sm3a.items.get(Items.coal))
+          .append(" sand=").append(sm3a.items.get(Items.sand))
+          .append("; coverage also applied to (7,7) -> status=").append(sm3b.power.status)
+          .append(" and (7,9) -> status=").append(sm3c.power.status)
+          .append("; silicon(7,7)=").append(sm3b.items.get(Items.silicon))
+          .append(" silicon(7,9)=").append(sm3c.items.get(Items.silicon))
+          .append(" -> 0.6666667 efficiency stretches crafting to 60 ticks per silicon\n");
+
+        write("java-power.txt", sb.toString());
     }
 }

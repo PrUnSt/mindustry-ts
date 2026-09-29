@@ -55,6 +55,10 @@
       #hint { color: #565f6b; }
       /* 资源 HUD：队伍核心库存（每物品种类 + 数量）。 */
       #hud { color: #7fd1c0; }
+      /* 电量 HUD：电网的发电 / 用电 / 覆盖率（数据取自 `Groups.build` 里的真实电网）。 */
+      #power { color: #ffd65c; }
+      /* 演示说明：指出「有电 / 没电」的对照在哪儿。 */
+      #demo { color: #6f7885; }
       /* 资源不足等操作的闪烁提示。固定宽度避免出现/消失时整页重排。 */
       #notice { color: #ffb454; min-height: 1.2em; }
     </style>
@@ -75,7 +79,13 @@
     <footer>
       <span id="status">初始化…</span>
       <span id="hud">核心：无核心</span>
+      <span id="power">电网：无</span>
       <span id="notice"></span>
+      <span id="demo">
+        演示对照：核心左侧的硅冶炼炉接了「燃煤发电机 + 太阳能板」（有电 → 转，产出 silicon）；
+        <b>核心右侧那台硅冶炼炉不转，是因为没电</b>（它是孤立的耗电方块，电网覆盖率恒为 0 →
+        efficiency = 0）。核心上方的石墨压机不耗电，所以一直在转。
+      </span>
       <span id="hint">左键建造（扣核心资源）· 右键拆除（退款）· R 旋转 · 空格暂停 · F 供料 · 1–9 切换工具</span>
     </footer>
     <script type="module" src="/src/main.ts"></script>

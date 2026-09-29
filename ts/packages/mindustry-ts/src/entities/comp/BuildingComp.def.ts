@@ -80,8 +80,16 @@ export abstract class BuildingComp implements Healthc, Teamc{
   optionalEfficiency = 0;
   /** `shouldConsume()` 为真时**本应**具有的效率（Java `potentialEfficiency`）。 */
   potentialEfficiency = 0;
-  /** 是否存在（电力以外的）效率 > 0 的消费者（Java `shouldConsumePower`）。 */
-  shouldConsumePower = true;
+  /**
+   * 是否存在（电力以外的）效率 > 0 的消费者（Java `shouldConsumePower`，:93）。
+   *
+   * ⚠️ 初值必须是 **false**：Java 里它是 `transient boolean`，未初始化即 false。
+   *   这**可观测** —— `PowerGraph.getPowerNeeded()`（`PowerGraph.java:111`）只读它，
+   *   所以「还没跑过 `updateConsumption()` 的耗电方块」不计入电网负荷。
+   *   golden `java-power.txt` 的 tick 0/1 是 `powerNeeded=0.0`，正源于此；
+   *   TS 原先写成 true 会让那两 tick 变成 0.5，逐 tick 对拍直接错位。
+   */
+  shouldConsumePower = false;
 
   /** 是否处于睡眠（Java `sleeping`）。睡眠只影响渲染与 `noSleep()` 记账，不影响 tick 结果。 */
   protected sleeping = false;
@@ -150,7 +158,18 @@ export abstract class BuildingComp implements Healthc, Teamc{
     //    （没有任何 `timerXxx` 索引会指向它）。
     this.timers = block.newTimers();
     // 仍由**具象建筑的构造器**分配：`items` / `liquids` 需要模块类（生成文件不能 import）。
-    // `power` 依赖未移植的 `PowerGraph`（计划 §9），整个分支留待 S5。
+    // `power` 走 `Block.newPower()` 工厂 —— 与 `newTimers()` 同一个规避手法
+    // （`PowerModule` 内部持有 `PowerGraph`，而生成文件 import 不到它）。
+    // 对应 Java `BuildingComp.java:153-156`：
+    //   if(block.hasPower){ power = new PowerModule(); power.graph.add(self()); }
+    // ⚠️ `power.graph.add(self())` 由 `PowerModule` 的构造完成（Java 是字段初值
+    //    `new PowerGraph()` + 显式 add），语义等价。
+    if(block.hasPower){
+      this.power = block.newPower();
+      if(this.power !== null && typeof this.power.graph !== "undefined" && this.power.graph !== null){
+        this.power.graph.add(this);
+      }
+    }
     this.initialized = true;
     return this;
   }
@@ -212,20 +231,107 @@ export abstract class BuildingComp implements Healthc, Teamc{
     return false;
   }
 
-  /** Java `updateConsumption`。S4 无消耗品系统。 */
+  /**
+   * 对应 Java `BuildingComp.updateConsumption()`（:1950-2011）。
+   *
+   * 三条分支，与 Java 逐条对齐：
+   *  1. **快路径**（:1952-1957）：`!block.hasConsumers || cheating()`。
+   *     `efficiency` 只由 `enabled` / `productionValid()` / `shouldConsume()` 决定，
+   *     **与库存无关** —— `Conveyor` / `Router` 就是走这条得到 `efficiency === 1`。
+   *  2. **`!enabled`**（:1961-1964）：全 0，且 `shouldConsumePower = false`。
+   *  3. **慢路径**（:1967-2010）：`efficiency = min(所有非可选消费者的 efficiency)`。
+   *
+   * ⚠️ 慢路径的两个易错点（照抄时别改）:
+   *   · 木桶取**最小值**，不是相乘 —— 「缺一点电」和「缺一点料」是同一个数；
+   *   · 第一趟里 `cons !== block.consPower && result <= 1e-7` 才把 `shouldConsumePower`
+   *     置 false（:1979-1981）—— 即「**电力之外**的消费者缺料」才让本方块退出电网负荷，
+   *     电力自己不足**不**触发（否则永远算不出覆盖率）。
+   *   · `update`（:1967）= `shouldConsume() && productionValid()`，为假时
+   *     `efficiency` 与 `optionalEfficiency` **归零**但 `potentialEfficiency` 保留（:1999-2001）。
+   *
+   * 未移植: `cheating()`（`TeamComp.java:17` = `team.rules().cheat`）—— 沙盒作弊，
+   *         按「快路径里的 `|| cheating()`」同样会全量供给；TS 无作弊模式，故省略该分支。
+   */
   updateConsumption(): void{
-    // Java 原文（`BuildingComp.java:1950-2011`）的第一条分支:
-    //   if(!block.hasConsumers || cheating()){ … return; }
-    // S4 有意收窄: `Consume` 体系未移植 → `Block.hasConsumers` **恒为 false**
-    // （见 `world/Block.ts` 的字段说明）→ 恒走这条「无消费者快路径」。
-    // 这与 Java 在「方块没有调用任何 consume(...)」时的结果**完全一致**，
-    // 也正是 `Conveyor` / `Router` 能得到 `efficiency === 1` 的原因。
-    // 未移植: 消费者分支（`nonOptionalConsumers` / `optionalConsumers` /
-    // `updateConsumers` 的两趟遍历与 `consPower` 特判）—— 属 S5+（计划 §9：不做电力）。
-    this.potentialEfficiency = this.enabled && this.productionValid() ? 1 : 0;
-    this.efficiency = this.optionalEfficiency = this.shouldConsume() ? this.potentialEfficiency : 0;
+    if(!this.block.hasConsumers){
+      this.potentialEfficiency = this.enabled && this.productionValid() ? 1 : 0;
+      this.efficiency = this.optionalEfficiency = this.shouldConsume() ? this.potentialEfficiency : 0;
+      this.shouldConsumePower = true;
+      this.updateEfficiencyMultiplier();
+      return;
+    }
+
+    if(!this.enabled){
+      this.potentialEfficiency = this.efficiency = this.optionalEfficiency = 0;
+      this.shouldConsumePower = false;
+      return;
+    }
+
+    const update = this.shouldConsume() && this.productionValid();
+
+    let minEfficiency = 1;
+
+    // ⚠️ Java 的 `self()` 由组件系统生成（`Entityc` 的 `@Final` 方法），返回**具象实体类型**
+    //    （这里是 `Building`）。TS 侧 codegen 不生成它，故用本地 `any` 别名代替 ——
+    //    只是为了让 `Consume.*(build)` 的签名通过，语义与 Java 的 `self()` 相同。
+    const self: any = this;
+
+    // 先假设效率为 1，再让消费者逐个压低（Java :1972-1973）
+    this.efficiency = this.optionalEfficiency = 1;
     this.shouldConsumePower = true;
+
+    for(const cons of this.block.nonOptionalConsumers){
+      const result = cons.efficiency(self);
+      if(cons !== this.block.consPower && result <= 0.0000001){
+        this.shouldConsumePower = false;
+      }
+      minEfficiency = Math.min(minEfficiency, result);
+    }
+
+    for(const cons of this.block.optionalConsumers){
+      this.optionalEfficiency = Math.min(this.optionalEfficiency, cons.efficiency(self));
+    }
+
+    this.efficiency = minEfficiency;
+    this.optionalEfficiency = Math.min(this.optionalEfficiency, minEfficiency);
+    this.potentialEfficiency = this.efficiency;
+
+    if(!update){
+      this.efficiency = this.optionalEfficiency = 0;
+    }
+
     this.updateEfficiencyMultiplier();
+
+    if(update && this.efficiency > 0){
+      // Java :2008 是 `cons.update(self())`；TS 侧方法改名，理由见
+      // `world/consumers/Consume.ts` 的 `updateConsume` 注释（字段与方法同名在 TS 不合法）。
+      for(const cons of this.block.updateConsumers){
+        cons.updateConsume(self);
+      }
+    }
+  }
+
+  /**
+   * 对应 Java `BuildingComp.consume()`（:1918-1921）—— 遍历全部消费者触发扣料。
+   *
+   * ⚠️ 这是「工厂不会凭空产资源」的**唯一**保障：`GenericCrafter.craft()` 的第一行就是它。
+   * 若 `block.consumers` 为空数组，本方法是 no-op → 原料不扣、产物照出 → 无限刷资源。
+   */
+  consume(): void{
+    const self: any = this;
+    for(const cons of this.block.consumers){
+      cons.trigger(self);
+    }
+  }
+
+  /** 对应 Java `consumeTriggerValid()`（:770-772）。基类恒 false；发电机覆写它。 */
+  consumeTriggerValid(): boolean{
+    return false;
+  }
+
+  /** 对应 Java `getPowerProduction()`（:774-776）。基类 0；发电机覆写它。 */
+  getPowerProduction(): number{
+    return 0;
   }
 
   /** 对应 Java `updateEfficiencyMultiplier()`。 */
@@ -258,6 +364,25 @@ export abstract class BuildingComp implements Healthc, Teamc{
   /** 建筑初始化完成后调用（Java `created`）。 */
   created(): void{ }
 
+  /**
+   * 加入世界（Java `BuildingComp.add()`，:162-168）。
+   *
+   * ⚠️ 为什么必须有这一条：Java 的 `add()` 里 `if(power != null) power.graph.checkAdd();`
+   *   是**电网被驱动的唯一入口** —— `checkAdd()` 把图的 updater 实体加进
+   *   `Groups.powerGraph`（`PowerGraph.java:303-305`）。少了这行，耗电方块的图
+   *   **永远不会被 `update()`** → `lastPowerNeeded` 恒 0 → 与 golden 里 tick 2 的
+   *   `powerNeeded=0.5` 对不上（TS 实测为 0）。
+   *
+   * ⚠️ `added = true` 不能只照抄 Java（Java 的这行由 `EntityComp.add()` 合并进来）：
+   *   这里显式写上，避免 codegen 只保留本方法而丢掉 `EntityComp.add()` 的副作用。
+   */
+  add(): void{
+    this.added = true;
+    if(this.power !== null){
+      this.power.graph.checkAdd();
+    }
+  }
+
   /** 被移除时调用（Java `onRemoved`）。 */
   onRemoved(): void{ }
 
@@ -270,11 +395,84 @@ export abstract class BuildingComp implements Healthc, Teamc{
   /** 邻近方块变化（Java `onProximityUpdate`）。S3 无邻接行为。 */
   onProximityUpdate(): void{ }
 
-  /** 加入邻近集合（Java `onProximityAdded`）。 */
-  onProximityAdded(): void{ }
+  /**
+   * 加入邻近集合（Java `onProximityAdded`，:1152-1156）。
+   * Java 原文：`if(power != null) updatePowerGraph();`
+   */
+  onProximityAdded(): void{
+    if(this.power !== null) this.updatePowerGraph();
+  }
 
-  /** 离开邻近集合（Java `onProximityRemoved`）。 */
-  onProximityRemoved(): void{ }
+  /**
+   * 离开邻近集合（Java `onProximityRemoved`，:1144-1148）。
+   * Java 原文：`if(power != null) powerGraphRemoved();`
+   */
+  onProximityRemoved(): void{
+    if(this.power !== null) this.powerGraphRemoved();
+  }
+
+  /**
+   * 把本建筑的电网与所有邻接电网合并（Java `updatePowerGraph`，:1163-1169）。
+   * ⚠️ 合并是**双向**的：`other.power.graph.addGraph(power.graph)` 内部会按规模
+   *    决定谁吞并谁（`PowerGraph.java:259-275`），这里不能改成单向。
+   */
+  updatePowerGraph(): void{
+    for(const other of this.getPowerConnections([])){
+      if(other !== null && other.power !== null){
+        other.power.graph.addGraph(this.power.graph);
+      }
+    }
+  }
+
+  /**
+   * 从电网中摘除（Java `powerGraphRemoved`，:1171-1182）。
+   * ⚠️ Java 的 `PowerGraph.remove()` 不原地删，而是「对每条邻接分支新建一张图」——
+   *    所以摘除一个节点可能把原图**裂成多张**，这是原版语义，别优化成原地删除。
+   */
+  powerGraphRemoved(): void{
+    if(this.power === null) return;
+    this.power.graph.remove(this);
+    this.power.links.length = 0;
+  }
+
+  /** 是否向 `other` 导电（Java `conductsTo`，:1184-1186）。绝缘方块返回 false。 */
+  conductsTo(_other: any): boolean{
+    return !this.block.insulated;
+  }
+
+  /**
+   * 收集电力连接（Java `getPowerConnections(Seq<Building>)`，:1188-1206）。
+   *
+   * ⚠️ 关键判据（:1195）: 两个**纯耗电**方块（`consumesPower && !outputsPower && !conductivePower`）
+   *     彼此**不导通** —— 电力只能靠发电机/导线/节点传播，耗电方块之间不互相传。
+   *     这也是 `Block.consumesPower` 默认值必须与 Java 一致（true）的原因。
+   *
+   * 未移植: `power.links` 的手动连线分支（:1201-1204，属 `PowerNode`）—— 依赖
+   *         `IntSeq` 解包与 `Vars.world.build()`，随 `PowerNode` 一起做（计划 §9）。
+   */
+  getPowerConnections(out: any[]): any[]{
+    out.length = 0;
+    if(this.power === null) return out;
+    for(const other of this.proximity){
+      if(other === null || other.power === null || other.team !== this.team) continue;
+      // 两个纯耗电方块互不导通（Java :1195）
+      if(this.block.consumesPower && other.block.consumesPower
+        && !this.block.outputsPower && !other.block.outputsPower
+        && !this.block.conductivePower && !other.block.conductivePower) continue;
+      if(!this.conductsTo(other) || !other.conductsTo(this)) continue;
+      // `power.links` 里已手动连线的跳过。⚠️ arc 的 `IntSeq` 没有 `contains`，
+      // 故按 `size` 手工扫（Java :1199 是 `!power.links.contains(other.pos())`）。
+      let linked = false;
+      for(let i = 0; i < this.power.links.size; i++){
+        if(this.power.links.items[i] === other.pos()){
+          linked = true;
+          break;
+        }
+      }
+      if(!linked) out.push(other);
+    }
+    return out;
+  }
 
   /**
    * 重建邻近缓存（Java `BuildingComp.updateProximity`，逐边扫描 `Edges`）。
@@ -381,16 +579,23 @@ export abstract class BuildingComp implements Healthc, Teamc{
   }
 
   /**
-   * 对应 Java `acceptItem(Building source, Item item)`。
+   * 对应 Java `acceptItem(Building source, Item item)`（:869-871）：
+   * ```java
+   * return block.consumesItem(item) && items.get(item) < getMaximumAccepted(item);
+   * ```
    *
-   * ⚠️ 有意收窄（S4）: Java 的实现是
-   * `block.consumesItem(item) && items.get(item) < getMaximumAccepted(item)`；
-   * S4 没有消费者体系（`Block.consumesItem` 恒 false，见 `world/Block.ts`）→ **恒 false**。
-   * 这与 Java 在「方块不消耗任何物品」时的结果一致。`Conveyor` / `Router` 都覆写了本方法，
-   * 因此这条基类实现只对「有库存但不接收物品」的方块生效（S4 的方块集合里没有这种）。
+   * ⚠️ 历史：C21 之前这里**恒返回 false**（S4 没有 `Consume` 体系，`Block.consumesItem`
+   *   只能恒 false）。C21 落地 `ConsumeItems` 后已按 Java 原文实现 ——
+   *   **这一处是「传送带能不能把矿投进工厂」的唯一闸门**：
+   *   恒 false 时 `Conveyor.pass() → next.acceptItem()` 永远失败 →
+   *   「钻头 → 传送带 → 工厂」这条链断在最后一米（由 web 演示布局实测发现）。
+   *
+   * ⚠️ `items` 为 null 的方块（无 ItemModule）直接 false —— Java 会 NPE，
+   *    这里收窄并保留注释。
    */
-  acceptItem(_source: Building, _item: any): boolean{
-    return false;
+  acceptItem(_source: Building, item: any): boolean{
+    if(this.items === null) return false;
+    return this.block.consumesItem(item) && this.items.get(item) < this.getMaximumAccepted(item);
   }
 
   /** 对应 Java `handleItem(Building source, Item item)`。 */
