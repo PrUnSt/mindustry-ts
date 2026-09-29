@@ -25,6 +25,7 @@ import { Team } from "./Team.js";
 import { Vars } from "../Vars.js";
 import type { Block } from "../world/Block.js";
 import type { Building } from "../gen/Building.js";
+import type { ItemModule } from "../world/modules/ItemModule.js";
 
 /** 对应 `mindustry.game.Teams.TeamData`。 */
 export class TeamData{
@@ -104,6 +105,23 @@ export class TeamData{
   core(): Building | null{
     return this.cores.isEmpty() ? null : this.cores.first();
   }
+
+  /**
+   * 队伍库存的**访问路径**（S5 新增）。
+   *
+   * 关键事实: Java 的 `TeamData` **没有** `items` 字段 —— 队伍的可花资源池就是
+   * 「该队伍**第一个核心**的 `items`」（`core()` 返回 `cores.first()`）。多核共享同一
+   * `ItemModule` 实例，靠 `CoreBuild.onProximityUpdate()` 把各核的 `items` 指向同一对象。
+   * 本方法只是把 Java 里反复出现的 `team.data().core().items` 这一步封装起来
+   * （消费方如 `Blocks.java` 的核心资源检查 / `CoreBlock.java:218` 的升级物返还），
+   * **不引入任何新状态**。
+   *
+   * @return 队伍核心的库存模块；该队伍当前没有核心时为 `null`。
+   */
+  teamItems(): ItemModule | null{
+    const c = this.core();
+    return c === null ? null : (c.items as ItemModule | null);
+  }
 }
 
 /** 对应 `mindustry.game.Teams`。 */
@@ -144,6 +162,44 @@ export class Teams{
   /** 不要直接修改返回值。对应 Java `cores(Team)`。 */
   cores(team: Team): Seq<Building>{
     return this.get(team).cores;
+  }
+
+  /**
+   * 对应 Java `Teams.registerCore(CoreBuild)`（`Teams.java:144-156`）。
+   *
+   * ⚠️ 两处 TS 化：
+   *  1. 参数类型是 `Building` 而非 `CoreBuild`：`CoreBuild` 是 `CoreBlock.ts` 里的具象子类，
+   *     本文件若 import 它会形成 game → world 的**类型**循环依赖；而本方法只用到
+   *     `.team` 与「进/出 `cores` 列表」两件事，`Building` 已足够（Java 的 `CoreBuild`
+   *     约束在 TS 由调用点保证）。
+   *  2. `core.team` 在 TS 里是**阵营 id（number）**（见 `gen/Building.ts` 的 `team: number`），
+   *     Java 里是 `Team` 对象 → 用 `Team.get(id)` 还原（`Team.ts:100`）。
+   */
+  registerCore(core: Building): void{
+    const data = this.get(Team.get(core.team));
+
+    // add core if not present
+    if(!data.cores.contains(core)){
+      data.cores.add(core);
+    }
+
+    // register in active list if needed
+    if(data.active() && !this.active.contains(data)){
+      this.active.add(data);
+      this.updateEnemies();
+    }
+  }
+
+  /** 对应 Java `Teams.unregisterCore(CoreBuild)`（`Teams.java:158-166`）。 */
+  unregisterCore(entity: Building): void{
+    const data = this.get(Team.get(entity.team));
+    data.cores.removeValue(entity);
+
+    // unregister in active list
+    if(!data.active()){
+      this.active.removeValue(data);
+      this.updateEnemies();
+    }
   }
 
   /** @return 队伍是否活跃（是否有存活核心）。对应 Java `isActive(Team)`。 */

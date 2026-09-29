@@ -21,6 +21,16 @@
 // ============================================================================
 
 import { ConveyorBuild, RouterBuild, Vars } from "@mindustry-ts/game";
+import { DrillBuild } from "@mindustry-ts/game/src/world/blocks/production/Drill.js";
+import { CoreBuild } from "@mindustry-ts/game/src/world/blocks/storage/CoreBlock.js";
+import type { Drill } from "@mindustry-ts/game/src/world/blocks/production/Drill.js";
+import type { ItemModule } from "@mindustry-ts/game";
+
+// ⚠️ 上面两条**深路径导入**的说明（不是随手写的）:
+//   `Build` / `Drill` / `DrillBuild` / `CoreBlock` / `CoreBuild` 尚未从 `@mindustry-ts/game`
+//   的公开入口 `index.ts` 导出（本阶段不修改 `ts/packages/**`）。`package.json` 没有
+//   `exports` 字段，`moduleResolution: bundler` 因此允许按源码路径解析 —— 这是**临时手段**，
+//   已在交付报告里请编排方把这几条补进 `index.ts` 的导出清单，之后应改回包入口导入。
 
 /** 与 `arc.graphics.Color` 结构兼容（只读 r/g/b/a，均为 0-1）。 */
 interface Rgba{
@@ -91,6 +101,16 @@ const BELT_EDGE = "#22252a";
 const BELT_ARROW = "#828b98";
 const ROUTER_FACE = "#474c56";
 const ROUTER_HUB = "#2f333a";
+
+/** 机械钻头 / 核心的机体配色（同为「原版观感的近似色」）。 */
+const DRILL_FACE = "#4a4136";
+const DRILL_EDGE = "#241f18";
+const DRILL_BIT = "#c8a878";
+const DRILL_ORE_EMPTY = "#6d6152";
+const CORE_FACE = "#2f3c49";
+const CORE_EDGE = "#171e25";
+const CORE_RIM = "#5fc8b4";
+const CORE_TEXT = "#ddf2ed";
 
 /** 渲染一帧所需的视图参数。 */
 export interface Viewport{
@@ -309,6 +329,235 @@ function drawRouterItem(
 }
 
 /**
+ * 多块结构的「锚点格」判据。
+ *
+ * `Tile.setBlock` 只把 `build.tile` 指向**锚点格**，其余格拿到的是**同一个**建筑实体
+ * （代理格），因此遍历 `world.tiles` 时同一个建筑会被访问 `size×size` 次。
+ * 只在 `build.tile === tile` 那一格画整块，才不会画出 `size²` 个重叠的方块。
+ * （size 1 时恒成立，所以这个判据对所有方块都可以统一使用。）
+ */
+function isAnchor(build: { tile: unknown }, tile: unknown): boolean{
+  return build.tile === tile;
+}
+
+/**
+ * 方块占地在**屏幕坐标**里的矩形。
+ *
+ * 世界 y 轴向上、屏幕 y 轴向下，且多块结构的锚点**不一定是左上角**：
+ * `sizeOffset = -Math.trunc((size-1)/2)` —— size 2 → 0（锚点 = 左下角，
+ * 因为 y 向上时 `y+1` 在屏幕上方）、size 3 → -1（锚点 = 中心）。
+ * 所以不能简单地把锚点当成左上角画 `size*cell`，必须按 `sizeOffset` 推最小角。
+ */
+function footprintRect(
+  tile: { x: number; y: number },
+  size: number,
+  worldHeight: number,
+  cell: number
+): { px: number; py: number; w: number }{
+  const offset = -Math.trunc((size - 1) / 2);
+  const minX = tile.x + offset;
+  // 屏幕上的最小 py 对应世界坐标里**最大**的 y
+  const maxY = tile.y + offset + size - 1;
+  return {
+    px: minX * cell,
+    py: (worldHeight - 1 - maxY) * cell,
+    w: size * cell
+  };
+}
+
+/**
+ * 画机械钻头（2×2）。
+ *
+ * 三个元素**全部由真实状态驱动**（没有一处「为了好看而写死的动画」）:
+ *   · 转子角度   ← `timeDrilled`（`updateTile` 每帧按 `warmup * delta` 累加）
+ *   · 转速/亮度  ← `warmup`（0..1，`Mathf.approachDelta(warmup, speed, warmupSpeed)`）
+ *   · 进度环     ← `progressRef / getDrillTime(dominantItem)`
+ *   · 环上刻度   ← `dominantItems`（本钻头压住了几格矿，直接决定挖矿倍速）
+ *   · 中心矿色   ← `dominantItem.color`（`canMine` 选出的主矿）
+ * 未压矿时 `dominantItem === null`，中心退化为中性灰、不画进度环 —— 一眼能看出「这里没矿」。
+ */
+function drawDrill(
+  ctx: CanvasRenderingContext2D,
+  px: number,
+  py: number,
+  cell: number,
+  w: number,
+  build: DrillBuild
+): void{
+  // ---- 机体 ----
+  ctx.fillStyle = DRILL_FACE;
+  ctx.fillRect(px, py, w, w);
+
+  ctx.strokeStyle = DRILL_EDGE;
+  ctx.lineWidth = Math.max(1, cell * 0.07);
+  ctx.strokeRect(px + 0.5, py + 0.5, w - 1, w - 1);
+
+  const cx = px + w / 2;
+  const cy = py + w / 2;
+
+  const warm = Math.max(0, Math.min(1, build.warmup));
+  const items = Math.max(0, build.dominantItems);
+  const item = build.dominantItem;
+
+  // ---- 中心: 主矿色圆盘（矿色取自 Item.color）----
+  ctx.fillStyle = item === null ? DRILL_ORE_EMPTY : css(item.color, 0.85);
+  ctx.beginPath();
+  ctx.arc(cx, cy, w * 0.29, 0, Math.PI * 2);
+  ctx.fill();
+
+  // ---- 转子：4 片叶，角度 = timeDrilled 的线性函数 ----
+  //     warmup 同时控制亮度（冷机几乎看不见，转起来才亮 —— 与 `drawSpinSprite` 的意图一致）
+  const spin = build.timeDrilled * 0.05;
+  ctx.globalAlpha = 0.25 + 0.75 * warm;
+  ctx.strokeStyle = DRILL_BIT;
+  ctx.lineWidth = Math.max(1.2, cell * 0.1);
+  ctx.lineCap = "round";
+  for(let i = 0; i < 4; i++){
+    const a = spin + (i * Math.PI) / 2;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + Math.cos(a) * w * 0.26, cy + Math.sin(a) * w * 0.26);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+
+  // ---- 进度环：progressRef / getDrillTime(dominantItem) ----
+  const drill = build.block as Drill;
+  const delay = item === null ? 0 : drill.getDrillTime(item);
+  const progress = delay > 0 ? Math.max(0, Math.min(1, build.progressRef / delay)) : 0;
+
+  const ringR = w * 0.4;
+  ctx.strokeStyle = "rgba(0,0,0,0.45)";
+  ctx.lineWidth = Math.max(2, cell * 0.14);
+  ctx.beginPath();
+  ctx.arc(cx, cy, ringR, 0, Math.PI * 2);
+  ctx.stroke();
+
+  if(progress > 0){
+    ctx.strokeStyle = item === null ? DRILL_BIT : css(item.color);
+    ctx.lineWidth = Math.max(2, cell * 0.14);
+    ctx.beginPath();
+    ctx.arc(cx, cy, ringR, -Math.PI / 2, -Math.PI / 2 + progress * Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // ---- 压住的矿格数：环上 `dominantItems` 个小刻度（4 格矿 = 4 倍速，画出来才看得出来）----
+  if(items > 0){
+    ctx.fillStyle = ctx.strokeStyle;
+    for(let i = 0; i < Math.min(items, 8); i++){
+      const a = -Math.PI / 2 + (i / Math.min(items, 8)) * Math.PI * 2;
+      const tx = cx + Math.cos(a) * ringR * 1.34;
+      const ty = cy + Math.sin(a) * ringR * 1.34;
+      ctx.beginPath();
+      ctx.arc(tx, ty, Math.max(1, cell * 0.07), 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+}
+
+/**
+ * 画核心（3×3）+ 库存。
+ *
+ * 数字是 `items.total()`（队伍可花资源的总量，`Build.beginPlace` 校验/扣除的就是它）；
+ * 底部色带按各物品**占总量比例**分段，颜色取 `Item.color` —— 于是「铜多还是铅多」
+ * 不看数字也能一眼分辨。核心不存在时这一趟根本不会跑到（没有 `CoreBuild`）。
+ */
+function drawCore(
+  ctx: CanvasRenderingContext2D,
+  px: number,
+  py: number,
+  cell: number,
+  w: number,
+  build: CoreBuild
+): void{
+  ctx.fillStyle = CORE_FACE;
+  ctx.fillRect(px, py, w, w);
+
+  ctx.strokeStyle = CORE_EDGE;
+  ctx.lineWidth = Math.max(1, cell * 0.07);
+  ctx.strokeRect(px + 0.5, py + 0.5, w - 1, w - 1);
+
+  const inset = Math.max(3, cell * 0.3);
+  ctx.strokeStyle = CORE_RIM;
+  ctx.lineWidth = Math.max(1, cell * 0.06);
+  ctx.strokeRect(px + inset, py + inset, w - inset * 2, w - inset * 2);
+
+  const items = build.items as ItemModule | null;
+
+  // ---- 库存总量 ----
+  ctx.fillStyle = CORE_TEXT;
+  ctx.font =
+    "600 " + String(Math.max(10, Math.round(cell * 0.9))) + "px ui-monospace, Consolas, monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(String(items === null ? 0 : items.total()), px + w / 2, py + w / 2);
+  // 复位（canvas 的 textAlign / textBaseline 是全局状态，别泄漏给别的绘制）
+  ctx.textAlign = "start";
+  ctx.textBaseline = "alphabetic";
+
+  // ---- 底部色带（按各物品比例）----
+  const bandH = Math.max(3, cell * 0.26);
+  drawItemBand(ctx, px + inset, py + w - inset - bandH, w - inset * 2, bandH, items);
+}
+
+/** 按各物品**占比**画一条分段色带（颜色取 `Item.color`）。 */
+function drawItemBand(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  items: ItemModule | null
+): void{
+  if(items === null) return;
+  const total = items.total();
+  if(total <= 0) return;
+
+  let cursor = x;
+  items.each((item, amount) => {
+    const seg = Math.max(0.5, (amount / total) * w);
+    ctx.fillStyle = css(item.color);
+    ctx.fillRect(cursor, y, seg, h);
+    cursor += seg;
+  });
+}
+
+/** 画钻头**自己库存**里的物品（有邻居时它会把产物推出去，这里是「推不出去」的存量）。 */
+function drawDrillItems(
+  ctx: CanvasRenderingContext2D,
+  px: number,
+  py: number,
+  cell: number,
+  w: number,
+  build: DrillBuild
+): void{
+  const items = build.items as ItemModule | null;
+  if(items === null || items.total() <= 0) return;
+
+  const radius = Math.max(1.6, cell * 0.12);
+  let i = 0;
+  items.each((item, amount) => {
+    for(let k = 0; k < amount && i < 10; k++, i++){
+      const col = i % 5;
+      const row = Math.trunc(i / 5);
+      ctx.fillStyle = css(item.color);
+      ctx.beginPath();
+      ctx.arc(
+        px + cell * (0.22 + col * 0.14),
+        py + w - cell * (0.22 + row * 0.14),
+        radius,
+        0,
+        Math.PI * 2
+      );
+      ctx.fill();
+      ctx.strokeStyle = "rgba(0,0,0,0.5)";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+  });
+}
+
+/**
  * 渲染整个世界。**按 4 趟遍历** — 顺序即图层（地板 → 方块 → 物品 → 悬停高亮），
  * 分开跑的理由是物品可能略微溢出格子，若与方块同趟会被后画的邻格传送带盖住。
  */
@@ -343,7 +592,18 @@ export function renderWorld(ctx: CanvasRenderingContext2D, view: Viewport): Fram
     const py = (height - 1 - tile.y) * cell;
     const build = tile.build;
 
-    if(build instanceof ConveyorBuild){
+    // 多块结构（钻头 2×2 / 核心 3×3）只在锚点格画一次，矩形按 `sizeOffset` 反推。
+    if(build instanceof DrillBuild || build instanceof CoreBuild){
+      if(!isAnchor(build, tile)) continue;
+
+      const rect = footprintRect(tile, block.size, height, cell);
+      if(build instanceof DrillBuild){
+        drawDrill(ctx, rect.px, rect.py, cell, rect.w, build);
+      }else{
+        drawCore(ctx, rect.px, rect.py, cell, rect.w, build);
+      }
+      stats.builds++;
+    }else if(build instanceof ConveyorBuild){
       drawConveyor(ctx, px, py, cell, build.rotation);
       stats.builds++;
     }else if(build instanceof RouterBuild){
@@ -363,7 +623,13 @@ export function renderWorld(ctx: CanvasRenderingContext2D, view: Viewport): Fram
     const px = tile.x * cell;
     const py = (height - 1 - tile.y) * cell;
 
-    if(build instanceof ConveyorBuild){
+    if(build instanceof DrillBuild){
+      if(!isAnchor(build, tile)) continue;
+      const rect = footprintRect(tile, tile.block().size, height, cell);
+      drawDrillItems(ctx, rect.px, rect.py, cell, rect.w, build);
+      const items = build.items as ItemModule | null;
+      if(items !== null) stats.items += items.total();
+    }else if(build instanceof ConveyorBuild){
       drawConveyorItems(ctx, px, py, cell, build);
       stats.items += build.len;
     }else if(build instanceof RouterBuild){

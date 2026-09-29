@@ -37,6 +37,8 @@ import mindustry.type.*;
 import mindustry.world.*;
 import mindustry.world.blocks.distribution.Conveyor.ConveyorBuild;
 import mindustry.world.blocks.distribution.Router.RouterBuild;
+import mindustry.world.blocks.production.Drill.DrillBuild;
+import mindustry.world.blocks.storage.CoreBlock.CoreBuild;
 import mindustry.world.blocks.defense.turrets.*;
 import org.junit.jupiter.api.*;
 
@@ -74,6 +76,10 @@ public class GoldenExportTest{
         logic.reset();
         state.set(State.playing);
         Time.clear();
+        // ⚠️ `Time.clear()` 只清延时队列，**不重置 `Time.time`**；`Time.time` 是跨测试累积的全局量，
+        // 部分行为（如 exportTurretFire 的首次开火时机）会受它影响。这里显式归零，
+        // 让每个场景与「独立 JVM 运行」等价，从而与已入库 golden 逐字节一致。
+        Time.setInternalTime(0);
         Mathf.rand.setSeed(seed);
         world.loadGenerator(w, h, tiles -> tiles.fill());
     }
@@ -88,6 +94,58 @@ public class GoldenExportTest{
         Tile tile = world.tile(x, y);
         tile.setBlock(Blocks.router, Team.sharded, rot);
         return (RouterBuild)tile.build;
+    }
+
+    static DrillBuild putDrill(int x, int y, int rot){
+        Tile tile = world.tile(x, y);
+        tile.setBlock(Blocks.mechanicalDrill, Team.sharded, rot);
+        return (DrillBuild)tile.build;
+    }
+
+    static CoreBuild putCore(Block block, int x, int y, int rot){
+        Tile tile = world.tile(x, y);
+        tile.setBlock(block, Team.sharded, rot);
+        return (CoreBuild)tile.build;
+    }
+
+    /**
+     * 铺铜矿 overlay。`countOre` 走的是 `tile.getLinkedTilesAs(block, ...)`，
+     * 即方块 2×2 覆盖区（sizeOffset=0 时就是主格与 +x/+y 三格），所以必须铺满整个覆盖区。
+     */
+    static void setOre(int x, int y){
+        world.tile(x, y).setOverlay(Blocks.oreCopper);
+    }
+
+    /** 场景 A/B 共用的 10 列行；`c1 == null` 表示「无出口」子场景，传送带三列恒为 0/null/0。 */
+    static void appendDrillRow(StringBuilder sb, int t, DrillBuild d, ConveyorBuild c1, ConveyorBuild c2){
+        sb.append(t).append('|')
+          .append(itemName(d.dominantItem)).append('|')
+          .append(d.dominantItems).append('|')
+          .append(d.progress).append('|')
+          .append(d.warmup).append('|')
+          .append(d.lastDrillSpeed).append('|')
+          .append(d.items.total()).append('|');
+        if(c1 == null){
+            sb.append(0).append("|null|").append(0);
+        }else{
+            sb.append(c1.len).append('|');
+            if(c1.len > 0) sb.append(c1.ys[0]); else sb.append("null");
+            sb.append('|').append(c2.len);
+        }
+        sb.append('\n');
+    }
+
+    /**
+     * 核心入库共用的 6 列行。`acceptItem(null, item)` 是直接探针：
+     * CoreBuild.acceptItem 只看 `items.get(item) < storageCapacity`，不使用 source，因此传 null 安全。
+     */
+    static void appendCoreRow(StringBuilder sb, int t, CoreBuild core){
+        sb.append(t).append('|')
+          .append(core.items.get(Items.copper)).append('|')
+          .append(core.items.get(Items.lead)).append('|')
+          .append(core.items.total()).append('|')
+          .append(core.acceptItem(null, Items.copper)).append('|')
+          .append(core.acceptItem(null, Items.lead)).append('\n');
     }
 
     static String itemName(Item item){
@@ -505,5 +563,185 @@ public class GoldenExportTest{
         }
 
         write("java-wave.txt", sb.toString());
+    }
+
+    // -------------------------------------------------------------------------------------
+    // 生产闭环（采矿 → 传送 → 核心入库）
+    // -------------------------------------------------------------------------------------
+
+    /**
+     * 场景 10：机械钻采矿（mechanical-drill 压铜矿）。
+     * 对应 TS 侧「Drill / DrillBuild」：TS 需要复刻 countOre（dominantItem/dominantItems）、
+     * warmup 爬升、progress 累积与满进度产出，以及产出时 offload 到邻居的行为。
+     *
+     * 布景：24x24 all-air seed=1；在 2×2 覆盖区 {(5,5),(6,5),(5,6),(6,6)} 铺 oreCopper overlay，
+     * 使 countOre 得到确定的 dominantItem=copper、dominantItems=4。
+     * ⚠️ countOre 遍历 tile.getLinkedTilesAs(block, ...)（sizeOffset=0 时即这 4 格），必须整块覆盖。
+     *
+     * 两条子场景（同一份列）：
+     *  [A] 无出口：钻头没有任何收物品的邻居 → dump() 因 proximity 为空而 no-op，
+     *      items.total() 单调累计（Block.itemCapacity=10）。任务要求记录到达 1/2/3 的精确 tick。
+     *  [B] drill → conveyor(7,5)r0 → conveyor(8,5)r0：产出即被 offload 进 c1，
+     *      记录 c1 收到物品的 tick 与「物品离开 c1 首格进入 c2」的精确 tick。
+     */
+    @Test
+    void exportDrill() throws IOException{
+        StringBuilder sb = new StringBuilder();
+        sb.append("# java golden · mechanical drill (copper)\n");
+        sb.append("# world: 24x24 all-air, seed=1, Time.delta=1, waves=false, canGameOver=false\n");
+        sb.append("# drill: mechanical-drill @ (5,5) size=2 tier=2 drillTime=600 team=sharded, footprint (5,5)-(6,6)\n");
+        sb.append("# ore: oreCopper overlay over the whole 2x2 footprint -> countOre: dominantItem=copper, dominantItems=4\n");
+        sb.append("# delay: real drill time = (drillTime + hardnessDrillMultiplier*hardness) / drillMultiplier = (600 + 50*1) / 1 = 650\n");
+        sb.append("# columns: tick|dominantItem|dominantItems|progress|warmup|lastDrillSpeed|itemsTotal|c1len|c1ys0|c2len\n");
+        sb.append("#   c1 = conveyor(7,5)r0, c2 = conveyor(8,5)r0; c1ys0 = position 0..1 of c1's item, \"null\" when c1 is empty\n");
+
+        // ---- [A] 无出口：items.total() 单调累计 ----
+        createWorld(24, 24, 1);
+        state.rules.waves = false;
+        state.rules.canGameOver = false;
+        for(int x = 5; x <= 6; x++){
+            for(int y = 5; y <= 6; y++) setOre(x, y);
+        }
+        DrillBuild drillA = putDrill(5, 5, 0);
+
+        sb.append("# [A] no outlet: nothing accepts items -> itemsTotal grows monotonically (Block.itemCapacity=10)\n");
+        int[] firstAt = {-1, -1, -1, -1};
+        for(int t = 0; t <= 600; t++){
+            int total = drillA.items.total();
+            for(int k = 1; k <= 3; k++){
+                if(firstAt[k] < 0 && total >= k) firstAt[k] = t;
+            }
+            appendDrillRow(sb, t, drillA, null, null);
+            if(t < 600) logic.update();
+        }
+        sb.append("# [A] exact ticks: 1st item @ tick ").append(firstAt[1])
+          .append(", 2nd @ tick ").append(firstAt[2])
+          .append(", 3rd @ tick ").append(firstAt[3])
+          .append("; itemsTotal @ tick 600 = ").append(drillA.items.total()).append('\n');
+        sb.append("#\n");
+
+        // ---- [B] 接传送带：产出即 offload 进 c1 ----
+        createWorld(24, 24, 1);
+        state.rules.waves = false;
+        state.rules.canGameOver = false;
+        for(int x = 5; x <= 6; x++){
+            for(int y = 5; y <= 6; y++) setOre(x, y);
+        }
+        DrillBuild drillB = putDrill(5, 5, 0);
+        ConveyorBuild c1 = putConveyor(7, 5, 0);
+        ConveyorBuild c2 = putConveyor(8, 5, 0);
+
+        sb.append("# [B] drill -> conveyor(7,5)r0 -> conveyor(8,5)r0: the item is offloaded into c1 the same tick it is produced\n");
+        int arrived = -1, departed = -1;
+        for(int t = 0; t <= 600; t++){
+            if(arrived < 0 && c1.len > 0) arrived = t;
+            if(departed < 0 && c2.len > 0) departed = t;
+            appendDrillRow(sb, t, drillB, c1, c2);
+            if(t < 600) logic.update();
+        }
+        sb.append("# [B] c1 received its 1st item @ tick ").append(arrived)
+          .append("; that item left c1 for c2 @ tick ").append(departed)
+          .append(" (c1 is empty afterwards: the drill is far slower than the belt)\n");
+
+        write("java-drill.txt", sb.toString());
+    }
+
+    /**
+     * 场景 11：核心入库（conveyor → core-shard）。
+     * 对应 TS 侧「CoreBuild / ItemModule 库存」：TS 需要复刻核心按物品类型分别计数的库存、
+     * 以及 acceptItem 的「达到 storageCapacity 即拒收」语义。
+     *
+     * 布景：24x24 all-air seed=1；core-shard（size=3，sizeOffset=-1 → 主格是**中心**格）
+     * 放在 (11,11)，footprint=(10,10)-(12,12)，team=sharded。
+     * block.itemCapacity=4000，无 storage 邻居 → storageCapacity=4000。
+     * 进料：feeder conveyor(8,10)r0 → conveyor(9,10)r0 → core（物品注入 (9,10)）。
+     *
+     * 两条子场景（同一份列）：
+     *  [A] 正常接收：tick 0 注入 copper，tick 60 注入 lead，逐 tick 记录核心库存；
+     *      物品先随传送带走 ~29 tick 才被核心接收。
+     *  [B] 容量封顶：先用真实 handleItem 把 copper 填满到 storageCapacity，
+     *      再验证 (1) 额外 handleItem 被 incinerate（不再入账）、(2) acceptItem(copper)=false，
+     *      (3) 容量是「按物品类型」的 → lead 仍可入库，(4) 被拒的 copper 会堵在传送带上。
+     *
+     * ⚠️ 原版 `Rules.coreIncinerates` **默认 true**：此时 `CoreBuild.acceptItem` 恒为 true
+     *    （`getMaximumAccepted` 返回 Integer.MAX_VALUE/2），超容量物品被焚烧而非拒收。
+     *    因此两个子场景都显式 `coreIncinerates=false`，才能观测到「按类型封顶 + 拒收」。
+     */
+    @Test
+    void exportCore() throws IOException{
+        StringBuilder sb = new StringBuilder();
+        sb.append("# java golden · core item intake (core-shard)\n");
+        sb.append("# world: 24x24 all-air, seed=1, Time.delta=1, waves=false, canGameOver=false\n");
+        sb.append("# rule: state.rules.coreIncinerates=false. Vanilla default is true: then CoreBuild.acceptItem always\n");
+        sb.append("#       returns true (getMaximumAccepted returns Integer.MAX_VALUE/2) and overflow is incinerated.\n");
+        sb.append("#       With it false, acceptItem(item) == (items.get(item) < storageCapacity); the cap is PER ITEM TYPE.\n");
+        sb.append("# core: core-shard size=3 team=sharded, main tile (11,11) -> footprint (10,10)-(12,12);\n");
+        sb.append("#       block.itemCapacity=4000, storageCapacity=4000 (no storage neighbours)\n");
+        sb.append("# feed: feeder conveyor(8,10)r0 -> conveyor(9,10)r0 -> core; items injected into (9,10)\n");
+        sb.append("# columns: tick|copper|lead|coreTotal|acceptCopper|acceptLead\n");
+
+        // ---- [A] 正常接收 ----
+        createWorld(24, 24, 1);
+        state.rules.waves = false;
+        state.rules.canGameOver = false;
+        state.rules.coreIncinerates = false;
+        CoreBuild coreA = putCore(Blocks.coreShard, 11, 11, 0);
+        ConveyorBuild feedA = putConveyor(8, 10, 0);
+        ConveyorBuild inA = putConveyor(9, 10, 0);
+        inA.handleItem(feedA, Items.copper);
+
+        sb.append("# [A] normal intake: copper injected @ tick 0, lead @ tick 60; each rides c(9,10) for ~29 ticks before the core takes it\n");
+        int copperAt = -1, leadAt = -1;
+        for(int t = 0; t <= 140; t++){
+            if(copperAt < 0 && coreA.items.get(Items.copper) > 0) copperAt = t;
+            if(leadAt < 0 && coreA.items.get(Items.lead) > 0) leadAt = t;
+            if(t == 60) inA.handleItem(feedA, Items.lead);
+            appendCoreRow(sb, t, coreA);
+            if(t < 140) logic.update();
+        }
+        sb.append("# [A] core received copper @ tick ").append(copperAt).append(", lead @ tick ").append(leadAt).append('\n');
+        sb.append("#\n");
+
+        // ---- [B] 容量封顶 ----
+        createWorld(24, 24, 1);
+        state.rules.waves = false;
+        state.rules.canGameOver = false;
+        state.rules.coreIncinerates = false;
+        CoreBuild coreB = putCore(Blocks.coreShard, 11, 11, 0);
+        ConveyorBuild feedB = putConveyor(8, 10, 0);
+        ConveyorBuild inB = putConveyor(9, 10, 0);
+
+        int cap = coreB.storageCapacity;
+        // 用真实路径把 copper 一件一件填到 storageCapacity（每次 handleItem 只加 1）
+        for(int i = 0; i < cap; i++){
+            coreB.handleItem(inB, Items.copper);
+        }
+        int filled = coreB.items.get(Items.copper);
+        // 已达容量后再 handleItem 一件：CoreBuild.handleItem 命中 incinerate 分支，不再入账
+        coreB.handleItem(inB, Items.copper);
+        int afterOverflow = coreB.items.get(Items.copper);
+
+        sb.append("# [B] capacity: storageCapacity=").append(cap)
+          .append("; handleItem(copper) x").append(cap).append(" -> copper=").append(filled)
+          .append("; one extra handleItem -> copper=").append(afterOverflow)
+          .append(" (incinerated, no add); acceptCopper=").append(coreB.acceptItem(null, Items.copper)).append('\n');
+        sb.append("# [B] the cap is per item type: lead injected @ tick 0 is accepted although copper is already full\n");
+        sb.append("# [B] copper injected @ tick 60 is rejected by the core and parks at the end of c(9,10)\n");
+        inB.handleItem(feedB, Items.lead);
+
+        int leadAtB = -1, clogAt = -1;
+        for(int t = 0; t <= 140; t++){
+            if(leadAtB < 0 && coreB.items.get(Items.lead) > 0) leadAtB = t;
+            if(t == 60) inB.handleItem(feedB, Items.copper);
+            if(clogAt < 0 && t > 60 && inB.len > 0 && inB.ys[0] >= 1f) clogAt = t;
+            appendCoreRow(sb, t, coreB);
+            if(t < 140) logic.update();
+        }
+        sb.append("# [B] lead accepted @ tick ").append(leadAtB)
+          .append("; copper held at ").append(coreB.items.get(Items.copper))
+          .append(" (== cap), rejected copper parked on c(9,10) @ tick ").append(clogAt)
+          .append(" with ys=").append(inB.len > 0 ? inB.ys[0] : -1f).append('\n');
+
+        write("java-core.txt", sb.toString());
     }
 }

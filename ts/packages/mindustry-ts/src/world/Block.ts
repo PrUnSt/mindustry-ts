@@ -26,7 +26,7 @@
 // 兜底值仍是 Java 的 `Building::create`。语义差异只在「忘写 buildType」时表现为用默认建筑
 // （Java 是反射失败 → 同样回落到默认值），风险已由 `set-block` 测试覆盖。
 
-import { Mathf } from "@mindustry-ts/arc";
+import { Mathf, Interval } from "@mindustry-ts/arc";
 import type { Prov } from "@mindustry-ts/arc";
 import { Color } from "../arc-compat/Color.js";
 import { ContentType } from "../ctype/ContentType.js";
@@ -378,9 +378,17 @@ export class Block extends UnlockableContent{
    */
   buildType: Prov<Building> | null = null;
 
-  /** 定时器数量上限。**必须声明在 `timerDump` 之前**（陷阱 #5）。 */
+  /**
+   * 定时器槽位数上限（Java `Block.java:233-234` 的 `public int timers = 0`）。
+   * **必须声明在 `timerDump` 之前**（陷阱 #5）。
+   *
+   * 子类若还要额外定时器，继续写 `xxxTimer = this.timers++` 即可（编号靠声明序）。
+   * `BuildingComp.create()` 调 {@link newTimers} 按本值分配 `Interval`，
+   * 再由 `BuildingComp.timer(id, time)` 按 id 索引 —— 与 Java 的
+   * `timer(new Interval(block.timers))` + `timer(timerDump, …)` 完全同构。
+   */
   timers = 0;
-  /** dump 定时器 id（Java `protected final int timerDump = timers++`）。 */
+  /** dump 定时器 id（Java `Block.java:443` 的 `protected final int timerDump = timers++`）。 */
   protected readonly timerDump: number = this.timers++;
   /** 尝试 dump 物品的间隔（tick），5 = 12 次/秒。 */
   dumpTime = 5;
@@ -417,6 +425,21 @@ export class Block extends UnlockableContent{
   newBuilding(): Building{
     // buildType 在构造期已保证非 null（见 initBuilding 的兜底）
     return this.buildType!();
+  }
+
+  /**
+   * 为建筑实例分配 `Interval`（对应 Java `BuildingComp.create` 里的
+   * `timer(new Interval(block.timers))`）。
+   *
+   * ⚠️ 为什么在这里而不是在生成文件里：`gen/Building.ts` **不能 import arc-ts**
+   * （codegen 约束，见 `EntityComp.def.ts`），而 `Interval` 是 arc 类型。`Block.ts` 是手写文件，
+   * 因此把分配点放在这里，生成文件只调这一个方法。
+   *
+   * @return `timers === 0` 时返回 `null`（与 Java 不同之处：Java 会造一个容量 0 的
+   *         `Interval`，但它**永不被索引**，因为没有任何 `timerXxx` 字段指向它；等价）。
+   */
+  newTimers(): Interval | null{
+    return this.timers > 0 ? new Interval(this.timers) : null;
   }
 
   /** @return 是否是多块结构。对应 Java `isMultiblock()`。 */
@@ -662,7 +685,13 @@ export class Block extends UnlockableContent{
     }
 
     this.offset = (((this.size + 1) % 2) * Vars.tilesize) / 2;
-    this.sizeOffset = -((this.size - 1) / 2);
+    // ⚠️ 必须整数除法：Java `Block.java:775,1451` 写的是 `sizeOffset = -((size - 1) / 2);`，
+    //    而 Java 的 `/` 对两个 int 是**向零截断**。TS 的 `/` 是浮点 → size 2 会得到 -0.5
+    //    （Java 得 0）、size 3 得 -0.5（Java 得 -1）。后果不是「差半格」而是**崩**：
+    //    `Vars.world.tile(x + dx + sizeOffset, …)` 传进小数 → 取到 undefined → setBlock 抛 TypeError。
+    //    S4 之前所有方块都是 size 1（此时两式同值 0），所以这个缺陷一直不可见；
+    //    首个偶数尺寸方块（mechanical-drill, size 2）一注册就会踩到。
+    this.sizeOffset = -Math.trunc((this.size - 1) / 2);
 
     if(this.requirements.length > 0 && this.buildTime < 0){
       this.buildTime = 0;

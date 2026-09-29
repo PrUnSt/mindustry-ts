@@ -101,6 +101,25 @@ export class ItemModule extends BlockModule{
     }
   }
 
+  /**
+   * 按 id 升序访问库存中非零的物品，`cons` 返回 `false` 时立即中断。
+   *
+   * 对齐 Java `BuildingComp.dump(Item)`（`BuildingComp.java:1085-1105`）：它在内层遍历
+   * `var allItems = content.items(); ... for(ii...){ if(!items.has(ii)) continue; ... }`，
+   * 即**按全局 item id 升序**尝试投递，找到第一个可接收的邻居就返回。
+   * 这里用同样的升序语义（`items` 数组即 id 序），并把「中断」表达为返回值。
+   *
+   * @return 是否遍历完（`false` 表示被 `cons` 中断）
+   */
+  eachItem(cons: (item: Item) => boolean): boolean{
+    for(let i = 0; i < this.items.length; i++){
+      if(this.items[i]! > 0){
+        if(!cons(Vars.content.item(i)!)) return false;
+      }
+    }
+    return true;
+  }
+
   /** 对应 Java `sum(ItemCalculator)`。 */
   sum(calc: ItemCalculator): number{
     let sum = 0;

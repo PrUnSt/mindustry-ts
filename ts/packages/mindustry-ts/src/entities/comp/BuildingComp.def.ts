@@ -98,6 +98,19 @@ export abstract class BuildingComp implements Healthc, Teamc{
   protected lastDamageTime: number = -300;
   /** 已完成 dump 累积量（Java `dumpAccum`）。 */
   protected dumpAccum: number = 0;
+  /**
+   * `dump` / `offload` / `put` 的轮转游标（Java `transient int cdump`）。
+   * 每成功投递或每试过一个邻居就递增，使等价邻居被轮流使用 —— 这是
+   * 「多个传送带接同一个路由器时物品均匀分流」的成因。
+   */
+  cdump: number = 0;
+  /**
+   * `Interval` 槽位（Java `Interval timers`）。
+   *
+   * ⚠️ 分配点在 `Block.newTimers()`（见 `create()`），因为 `Interval` 是 arc 类型而生成文件
+   * 不能 import。`block.timers === 0` 时保持 `null`。
+   */
+  timers: any = null;
 
   /** 把 tile 实体数据设为本对象，必要时加入 group。对照 `BuildingComp.init`。 */
   init(tile: any, team: number, shouldAdd: boolean, rotation: number): Building{
@@ -131,15 +144,13 @@ export abstract class BuildingComp implements Healthc, Teamc{
     this.team = team;
     this.health = block.health;
     this.maxHealth = block.health;
-    // TODO(S4): Java 在这里还有
-    //   `timer(new Interval(block.timers));`
-    //   `if(block.hasItems) items = new ItemModule();`
-    //   `if(block.hasLiquids) liquids = new LiquidModule();`
-    //   `if(block.hasPower){ power = new PowerModule(); power.graph.add(self()); }`
-    // ⚠️ 生成文件不能 import 模块类 → 前两项改由**具象建筑的构造器**分配
-    //    （`Conveyor.ts` / `Router.ts` 里的 `this.items = new ItemModule()`）；
-    //    `power` 依赖未移植的 `PowerGraph`（计划 §9），整个分支留待 S5。
-    // ⚠️ `block.timers` 的 `Interval` 属于「定时倾倒/dump」路径（S4 不移植 dump），故省略。
+    // 对应 Java `BuildingComp.java:149` 的 `timer(new Interval(block.timers));`。
+    // ⚠️ `Interval` 是 arc 类型，生成文件不能 import → 经 `Block.newTimers()` 分配
+    //    （`Block.ts` 是手写文件）。`block.timers === 0` 时得到 `null`，语义等价
+    //    （没有任何 `timerXxx` 索引会指向它）。
+    this.timers = block.newTimers();
+    // 仍由**具象建筑的构造器**分配：`items` / `liquids` 需要模块类（生成文件不能 import）。
+    // `power` 依赖未移植的 `PowerGraph`（计划 §9），整个分支留待 S5。
     this.initialized = true;
     return this;
   }
@@ -410,6 +421,136 @@ export abstract class BuildingComp implements Healthc, Teamc{
   handleStack(item: any, amount: number, _source: any): void{
     this.noSleep();
     this.items.add(item, amount);
+  }
+
+  // ---------------------------------------------------------------- 定时器与物品搬运
+  // 这组方法构成「钻头/工厂定时倾倒、把物品推向邻居」的机制。S4 之前它们缺失，
+  // 是 Drill 移植的头号阻塞（见 `Drill.java:288` 的 `timer(timerDump, …)` 与 `:318` 的 `offload`）。
+
+  /**
+   * 对应 Java `BuildingComp.timer(Interval timer, float time)`：
+   * ```java
+   * protected boolean timer(Interval timer, float time){ return timer.get(time); }
+   * ```
+   * ⚠️ 签名从「传 `Interval` 对象」改为「传槽位 id」：TS 生成文件拿不到 `Interval` 类型，
+   * 而所有调用点写的都是 `timer(timerXxx, …)` 这种**编译期常量槽位**（`timerDump` 等），
+   * 改成 id 后语义不变、且不需要 import。`timers === null`（`block.timers === 0`）时恒 false ——
+   * 与 Java「没有任何 `timerXxx` 指向它，方法永不被调用」等价。
+   */
+  timer(id: number, time: number): boolean{
+    return this.timers !== null && this.timers.get(id, time);
+  }
+
+  /** 对应 Java `BuildingComp.incrementDump(int prox)`。 */
+  incrementDump(prox: number): void{
+    // this is possible if transferring an item changed a block
+    if(prox !== 0){
+      this.cdump = (this.cdump + 1) % prox;
+    }
+  }
+
+  /** 对应 Java `BuildingComp.canDump(Building, Item)`（基类恒 `true`，子类可加限制）。 */
+  canDump(_to: any, _item: any): boolean{
+    return true;
+  }
+
+  /**
+   * 对应 Java `BuildingComp.dump(Item todump)`（`BuildingComp.java:1078-1117`）：
+   * 试图把库存里的物品投给最近的可接收邻居，成功则从自己库存里扣掉 1 个。
+   *
+   * ⚠️ `todump === null` 分支在 Java 里内层遍历的是 `content.items()` **全表**，
+   * 逐 id 判 `items.has(ii)` —— 即**按全局 item id 升序**尝试。这里用
+   * `ItemModule.eachItem()` 表达同序（`items` 数组本身就是 id 序）。
+   *
+   * ⚠️ 邻居遍历用 `(i + dumpIdx) % len`，其中 `dumpIdx` 是**进入时的 `cdump` 快照**；
+   * `incrementDump` 改的是字段 `cdump`，不影响本轮快照 —— 与 Java 逐字一致。
+   */
+  dump(todump: any): boolean{
+    if(!this.block.hasItems || this.items === null || this.items.total() === 0 || this.proximity.length === 0)
+      return false;
+    if(todump !== null && !this.items.has(todump)) return false;
+
+    const prox = this.proximity;
+    const dumpIdx = this.cdump;
+
+    if(todump === null){
+      for(let i = 0; i < prox.length; i++){
+        const other = prox[(i + dumpIdx) % prox.length];
+        let found = false;
+        this.items.eachItem((item: any) => {
+          if(other.acceptItem(this, item) && this.canDump(other, item)){
+            other.handleItem(this, item);
+            this.items.remove(item, 1);
+            this.incrementDump(prox.length);
+            found = true;
+            return false;
+          }
+          return true;
+        });
+        if(found) return true;
+        this.incrementDump(prox.length);
+      }
+    }else{
+      for(let i = 0; i < prox.length; i++){
+        const other = prox[(i + dumpIdx) % prox.length];
+        if(other.acceptItem(this, todump) && this.canDump(other, todump)){
+          other.handleItem(this, todump);
+          this.items.remove(todump, 1);
+          this.incrementDump(prox.length);
+          return true;
+        }
+        this.incrementDump(prox.length);
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * 对应 Java `BuildingComp.offload(Item)`（`BuildingComp.java:1006-1020`）：
+   * 先把物品投给邻居，**全都投不出去才进自己库存**（`handleItem(self(), item)`）。
+   * 这是钻头产出的落点（`Drill.java:318`）。
+   *
+   * ⚠️ Java 首行 `produced(item, 1)` 已省略：它只作用于
+   * `state.rules.sector != null && team == rules.defaultTeam`（campaign 场景统计 + 解锁），
+   * headless 下 `rules.sector` 恒为 null → 条件恒 false，省略后语义等价（见计划 §9）。
+   */
+  offload(item: any): void{
+    const prox = this.proximity;
+    const dumpIdx = this.cdump;
+
+    for(let i = 0; i < prox.length; i++){
+      // ⚠️ 注意与 `dump` 的差异：Java 原文这里**先** incrementDump **再**取 other。
+      //    因局部 `dumpIdx` 是快照，两者结果一致；照抄以免将来对拍时逐行比对失败。
+      this.incrementDump(prox.length);
+      const other = prox[(i + dumpIdx) % prox.length];
+      if(other.acceptItem(this, item) && this.canDump(other, item)){
+        other.handleItem(this, item);
+        return;
+      }
+    }
+
+    this.handleItem(this, item);
+  }
+
+  /**
+   * 对应 Java `BuildingComp.put(Item)`：与 `offload` 相同的寻找逻辑，
+   * 但**不修改自身库存**，只回答「投出去了没有」。
+   */
+  put(item: any): boolean{
+    const prox = this.proximity;
+    const dumpIdx = this.cdump;
+
+    for(let i = 0; i < prox.length; i++){
+      this.incrementDump(prox.length);
+      const other = prox[(i + dumpIdx) % prox.length];
+      if(other.acceptItem(this, item) && this.canDump(other, item)){
+        other.handleItem(this, item);
+        return true;
+      }
+    }
+
+    return false;
   }
 
   /** 对应 Java `acceptLiquid(Building, Liquid)`。 */

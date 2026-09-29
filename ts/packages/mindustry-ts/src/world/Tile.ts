@@ -425,6 +425,67 @@ export class Tile{
       : null;
   }
 
+  // ---------------------------------------------------------------- 多块结构遍历
+  // 源: `Tile.java:479-533`。`Drill.countOre`（`Drill.java:198-229`）靠它把 2×2 钻头覆盖的
+  // 4 格地板全扫一遍，这是「钻头产出量取决于压在几格矿上」的成因。
+  //
+  // ⚠️ 命名：Java 有 `getLinkedTiles(Cons)` / `getLinkedTiles(Seq)` / `getLinkedTilesAs(Block, Cons)` /
+  //   `getLinkedTilesAs(Block, Seq)` 四个重载；TS 不能同名不同元数（陷阱 #16 同判据），
+  //   故拆成「回调版」保留原名、「复用数组版」加 `Into` 后缀（Seq 版本在 Java 里的唯一价值
+  //   就是**复用容器避免每帧分配**，TS 用数组表达同一意图）。
+
+  /**
+   * 遍历本 tile 所属多块结构的全部格（含自己）；非多块结构时只访问自己。
+   * 对应 Java `getLinkedTiles(Cons<Tile>)`。
+   */
+  getLinkedTiles(cons: (tile: Tile) => void): void{
+    const block = this.blockRef;
+    if(block.isMultiblock()){
+      const size = block.size, o = block.sizeOffset;
+      for(let dx = 0; dx < size; dx++){
+        for(let dy = 0; dy < size; dy++){
+          const other = Vars.world.tile(this.x + dx + o, this.y + dy + o);
+          if(other !== null) cons(other);
+        }
+      }
+    }else{
+      cons(this);
+    }
+  }
+
+  /**
+   * 遍历「若本 tile 上放的是 `block`，它将覆盖的格」（含自己）。
+   * 对应 Java `getLinkedTilesAs(Block, Cons<Tile>)` —— 钻头用它在**尚未放置**时
+   * 预估自己的覆盖范围。
+   */
+  getLinkedTilesAs(block: Block, cons: (tile: Tile) => void): void{
+    if(block.isMultiblock()){
+      const size = block.size, o = block.sizeOffset;
+      for(let dx = 0; dx < size; dx++){
+        for(let dy = 0; dy < size; dy++){
+          const other = Vars.world.tile(this.x + dx + o, this.y + dy + o);
+          if(other !== null) cons(other);
+        }
+      }
+    }else{
+      cons(this);
+    }
+  }
+
+  /** 对应 Java `getLinkedTiles(Seq<Tile>)`（复用容器版，`tmpArray` 会被清空）。 */
+  getLinkedTilesInto(tmpArray: Tile[]): Tile[]{
+    tmpArray.length = 0;
+    this.getLinkedTiles((t) => tmpArray.push(t));
+    return tmpArray;
+  }
+
+  /** 对应 Java `getLinkedTilesAs(Block, Seq<Tile>)`（复用容器版，`tmpArray` 会被清空）。 */
+  getLinkedTilesAsInto(block: Block, tmpArray: Tile[]): Tile[]{
+    tmpArray.length = 0;
+    this.getLinkedTilesAs(block, (t) => tmpArray.push(t));
+    return tmpArray;
+  }
+
   /** 对应 Java `shouldSaveData()`。 */
   shouldSaveData(): boolean{
     return this.floorRef.saveData || this.overlayRef.saveData || this.blockRef.saveData;
@@ -496,7 +557,10 @@ export class Tile{
 
     // 设置多块结构
     if(this.blockRef.isMultiblock()){
-      const offset = -((this.blockRef.size - 1) / 2);
+      // ⚠️ 整数除法。Java `Tile.java:261` 是 `int offset = -(block.size - 1) / 2;` —— int/int 向零截断。
+      //    TS 的 `/` 是浮点，size 2 会得 -0.5 → `Vars.world.tile()` 收到小数 → undefined → 崩。
+      //    （size 1 时两式同值，故 S4 之前不可见；size 2 的 mechanical-drill 是首个触发者。）
+      const offset = -Math.trunc((this.blockRef.size - 1) / 2);
       const entity = this.build;
       const block = this.blockRef;
 
@@ -644,8 +708,9 @@ export class Tile{
         const cx = this.build.tileX();
         const cy = this.build.tileY();
         const size = this.build.block.size;
-        const offsetx = -((size - 1) / 2);
-        const offsety = -((size - 1) / 2);
+        // ⚠️ 整数除法，对齐 Java `Tile.java:621-622` 的 `int offsetx = -(size - 1) / 2;`（见上方同型说明）。
+        const offsetx = -Math.trunc((size - 1) / 2);
+        const offsety = -Math.trunc((size - 1) / 2);
         for(let dx = 0; dx < size; dx++){
           for(let dy = 0; dy < size; dy++){
             const other = Vars.world.tile(cx + dx + offsetx, cy + dy + offsety);

@@ -11,7 +11,7 @@
 //   没有与 Java 对齐的保证** —— 后续阶段整体替换本文件时，所有 id 都会回到 Java 序列。
 //   这是一处必须让下游读者知道的偏差；好在当前没有任何「按 id 持久化」的路径（无存档/无网络）。
 //
-// 已迁移的方块（S4 共 15 个 + S3 防御闭环新增 1 个，合计 16 个）:
+// 已迁移的方块（S4 共 15 个 + S3 防御闭环 1 个 + 采矿/核心闭环 2 个，合计 18 个）:
 //
 //   ── S3 的 6 个（覆盖 S3 的每一条断言路径）──
 //   air        —— 自举起点（陷阱 #2），`Tile` 构造器与 `Floor` 字段初值都读它，必须是第 0 条
@@ -39,6 +39,15 @@
 //                 （`ts/golden/java-turret-fire.txt`）。它**追加在末尾**，因为块 id 有顺序
 //                 敏感性（`air` 必须是 0）。⚠️ 它的弹药不在 `load()` 里直接绑定，见 `load()` 末尾。
 //
+//   ── 采矿/核心闭环新增的 2 个 ──
+//   mechanicalDrill —— 采矿闭环的产矿端（`ts/golden/java-drill.txt` 的对拍锚点）。
+//       它同时是本仓库**第一个偶数尺寸（size 2）方块** —— 正是它暴露了 `Block.sizeOffset` /
+//       `Tile.setBlock` 里「Java 的 int 除法 vs TS 的浮点除法」这一潜伏缺陷
+//       （size 2 时前者得 0、后者得 -0.5 → `world.tile()` 收到小数 → 崩；已修复，见 `Block.ts`）。
+//   coreShard —— 物品的最终去处；「队伍库存」= `team.data().core().items`。
+//       `ts/golden/java-core.txt` 覆盖两条语义：正常接收（copper/lead 各于 tick 29/89 入库）
+//       与容量封顶（**按物品类型**，copper 满 4000 时 `acceptItem(copper)=false` 但仍收 lead）。
+//
 // 未迁移（按 Java 的区块归类，逐段标注，避免静默丢失）:
 //   - environment 的其余全部：`spawn` / `removeWall` / `removeOre` / `cliff` /
 //     `ConstructBlock` 1..16 / `deepwater` / `water` / `taintedWater` / `tar` / `slag` /
@@ -61,9 +70,17 @@
 //     ⚠️ `overflowGate` 的缺失会影响 `Router.getTileTarget` 里的一处守卫：
 //     `Router.ts` 用 `Vars.content.block("overflow-gate")` 表达它，因此该守卫在 S4 恒不成立
 //     （与 Java 在「地图里没有 overflowGate」时一致），补上方块后**无需改代码**即自动生效。
-//   - production：全部钻头与工厂 —— 依赖 `ItemModule` / `Attribute` / `PowerGraph`
-//   - liquid / power / storage / units / payloads / sandbox / logic / campaign / heat
-//     —— 全部依赖 S4+ 系统（`LiquidModule` / `PowerGraph` / `CoreBuild` / `UnitType` /
+//   - production：`mechanical-drill`（**本阶段已迁**）之外的**全部** —— `pneumaticDrill` /
+//     `laserDrill` / `blastDrill` 与 `BeamDrill` / `BurstDrill` 两个独立类，以及全部工厂。
+//     电力钻头依赖 `Consume` / `PowerGraph`；`mechanical-drill` 的 `consumeLiquid(water).boost()`
+//     已用「speed 公式第三实参固定为 0」等价替代（见 `Drill.ts` 与 `load()` 里的注释）。
+//     ⚠️ `Attribute` 与钻头**无关** —— 钻头读的是 `tile.drop()`
+//     （`overlay.itemDrop ?? floor.itemDrop`，`Tile.java:580-581`）；`Attribute` 是水泵/热能机
+//     一类的输入。这是一处容易搞错的地方，详见 `Drill.ts` 文件头。
+//   - storage：`core-shard`（**本阶段已迁**）之外的 `core-foundation` / `core-nucleus` /
+//     `coreBastion`，以及全部容器（`StorageBlock`）—— 后者依赖 `owns()` 的邻近共享库存。
+//   - liquid / power / units / payloads / sandbox / logic / campaign / heat
+//     —— 全部依赖 S4+ 系统（`LiquidModule` / `PowerGraph` / `UnitType` /
 //     `Payload` / `LogicBlock` / `SectorPreset`）
 //
 // 迁移方法: Java 的 `new Floor("stone")` / `new Wall("copper-wall"){{ ... }}` 双大括号
@@ -84,9 +101,12 @@ import { ItemTurret, ShootAlternate } from "../world/blocks/defense/Turret.js";
 import { Bullets } from "./Bullets.js";
 import { Vars } from "../Vars.js";
 import { Category } from "../type/Category.js";
+import { Env } from "../world/meta/Env.js";
 import { ContentType } from "../ctype/ContentType.js";
 import { Items } from "./Items.js";
 import { ItemStack } from "../type/ItemStack.js";
+import { Drill } from "../world/blocks/production/Drill.js";
+import { CoreBlock } from "../world/blocks/storage/CoreBlock.js";
 
 /** 对应 `mindustry.content.Blocks`（S3/S4 子集，见文件头）。 */
 export class Blocks{
@@ -122,6 +142,10 @@ export class Blocks{
   static router: Router;
   /** 双管炮塔（S3 · 防御闭环的可对拍里程碑，见 `load()` 末尾的注释）。 */
   static duo: ItemTurret;
+  /** 机械钻头（采矿闭环的产矿端，`ts/golden/java-drill.txt` 的对拍锚点）。 */
+  static mechanicalDrill: Drill;
+  /** 核心（碎片级）—— 物品的最终去处，队伍库存 = `team.data().core().items`。 */
+  static coreShard: CoreBlock;
 
   /** Java `Blocks` 里的 `int wallHealthMultiplier = 4`（`Blocks.java:1706`）。 */
   private static readonly wallHealthMultiplier = 4;
@@ -267,5 +291,53 @@ export class Blocks{
       // 数值与 `content/Bullets.ts` 里预先写死的 golden 值一致（175/2.5=70、191/3.5、175/3）。
       Blocks.duo.limitRange(5);
     };
+
+    // ---- production（采矿闭环的产矿端）----
+    //
+    // ⚠️ **位置**：与 `duo` 一样追加在末尾（本文件的 id 顺序敏感性 —— `air` 必须是 0）。
+    //
+    // Java: `mechanicalDrill = new Drill("mechanical-drill"){{ requirements(Category.production, with(Items.copper, 12));
+    //        tier = 2; drillTime = 600; size = 2; envEnabled ^= Env.space; researchCost = with(Items.copper, 10);
+    //        consumeLiquid(Liquids.water, 0.05f).boost(); }}`（`Blocks.java:2884-2894`）
+    Blocks.mechanicalDrill = new Drill("mechanical-drill");
+    Blocks.mechanicalDrill.setRequirements(Category.production, [new ItemStack(Items.copper, 12)]);
+    Blocks.mechanicalDrill.tier = 2;
+    Blocks.mechanicalDrill.drillTime = 600;
+    // ⚠️ `size = 2` 是**本仓库第一个偶数尺寸方块**。它触发了一处潜伏已久的缺陷：
+    //    `Block.sizeOffset` 与 `Tile.setBlock`/`preChanged` 里的偏移，Java 写的是 int 除法
+    //    （`-(size-1)/2` → size 2 得 0），而 TS 原先照抄成浮点除法（得 -0.5）→ `world.tile()` 收到
+    //    小数 → `undefined.setBlock()` 崩。**已在本阶段修复**（`Block.ts` / `Tile.ts` 三处加 `Math.trunc`）。
+    Blocks.mechanicalDrill.size = 2;
+    // Java: `envEnabled ^= Env.space;` —— 机械钻「不在太空工作」（`Blocks.java:2890`）；
+    //       `Drill` 构造器已先做 `envEnabled |= Env.space`（`Drill.java:86`），这里异或掉。
+    Blocks.mechanicalDrill.envEnabled ^= Env.space;
+    // Java: `researchCost = with(Items.copper, 10);` —— `UnlockableContent.researchCost` 无消费方（研究系统未移植）。
+    // Java: `consumeLiquid(Liquids.water, 0.05f).boost();` —— `Consume` 体系未移植（计划 §9）。
+    //       处置见 `Drill.ts`：`updateTile` 的 speed 公式第三实参固定写 `0`，等价于「未接水」，
+    //       并由 `ts/golden/java-drill.txt` 的 `lastDrillSpeed` 列独立验证（speed === 1）。
+
+    // ---- storage（核心：物品的最终去处）----
+    //
+    // Java: `coreShard = new CoreBlock("core-shard"){{ requirements(Category.effect, BuildVisibility.coreZoneOnly,
+    //        with(Items.copper, 1000, Items.lead, 800)); alwaysUnlocked = true; isFirstTier = true;
+    //        unitType = UnitTypes.alpha; health = 1100; itemCapacity = 4000; size = 3;
+    //        buildCostMultiplier = 2f; unitCapModifier = 8; }}`（`Blocks.java:3145-3157`）
+    Blocks.coreShard = new CoreBlock("core-shard");
+    // ⚠️ `BuildVisibility.coreZoneOnly` 未移植（TS 侧只有 hidden/shown/debugOnly/editorOnly/
+    //    worldProcessorOnly/sandboxOnly/campaignOnly/lightingOnly/fogOnly）→ 退化为默认 `shown`。
+    //    当前**无可观测差异**：`Build.validPlace` 的简化实现不读 `buildVisibility`。
+    //    将来补放置合法性校验时必须回补这一条。
+    Blocks.coreShard.setRequirements(Category.effect, [
+      new ItemStack(Items.copper, 1000),
+      new ItemStack(Items.lead, 800),
+    ]);
+    Blocks.coreShard.alwaysUnlocked = true;
+    Blocks.coreShard.isFirstTier = true;
+    // Java: `unitType = UnitTypes.alpha;` —— 单位系统未移植（`CoreBlock.unitType` 字段已省略）。
+    Blocks.coreShard.health = 1100;
+    Blocks.coreShard.itemCapacity = 4000;
+    Blocks.coreShard.size = 3;
+    Blocks.coreShard.buildCostMultiplier = 2;
+    Blocks.coreShard.unitCapModifier = 8;
   }
 }
