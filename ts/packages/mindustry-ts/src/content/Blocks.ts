@@ -112,6 +112,8 @@ import { ConsumeGenerator } from "../world/blocks/power/ConsumeGenerator.js";
 import { SolarGenerator } from "../world/blocks/power/SolarGenerator.js";
 import { PowerNode } from "../world/blocks/power/PowerNode.js";
 import { Battery } from "../world/blocks/power/Battery.js";
+import { UnitFactory, UnitPlan } from "../world/blocks/units/UnitFactory.js";
+import { UnitTypes } from "./UnitTypes.js";
 import { ConsumeItemFlammable } from "../world/consumers/ConsumeItemFlammable.js";
 import { ConsumeItemExplode } from "../world/consumers/ConsumeItemExplode.js";
 
@@ -167,6 +169,9 @@ export class Blocks{
 
   /** 电池（C23 · 缓冲储电；`Java Blocks.java:2510-2514`）。 */
   static battery: Battery;
+
+  /** 地面工厂（C24 · 单位生产；`Java Blocks.java:6302-6313`）。 */
+  static groundFactory: UnitFactory;
 
   /** Java `Blocks` 里的 `int wallHealthMultiplier = 4`（`Blocks.java:1706`）。 */
   private static readonly wallHealthMultiplier = 4;
@@ -443,5 +448,32 @@ export class Blocks{
     ]);
     Blocks.battery.consumePowerBuffered(4000);
     Blocks.battery.baseExplosiveness = 1;
+
+    // ---- C24 单位生产（ground-factory）----
+    // Java `Blocks.java:6302-6313`：`groundFactory = new UnitFactory("ground-factory"){{
+    //   requirements(Category.units, with(Items.copper, 50, Items.lead, 120, Items.silicon, 80));
+    //   plans = Seq.with(dagger 60*15 [si10,le10], crawler 60*10, nova 60*40); size=3; consumePower(1.2f); }};`
+    // ⚠️ TS 只有 dagger/mace 单位（`UnitTypes.ts` 收窄）→ 方案收窄为 dagger 一个。
+    Blocks.groundFactory = new UnitFactory("ground-factory");
+    Blocks.groundFactory.setRequirements(Category.units, [
+      new ItemStack(Items.copper, 50),
+      new ItemStack(Items.lead, 120),
+      new ItemStack(Items.silicon, 80),
+    ]);
+    // ⚠️ `UnitTypes.load()` 未接入 `ContentLoader`（`ContentLoader.ts:216` 原位注释）
+    // → 方案走 `planBinder` 惰性装配（同 `Blocks.duo.ammoBinder` 的做法），
+    // 首次使用时按需 `Bullets.load()` / `UnitTypes.load()` 再填方案。
+    Blocks.groundFactory.planBinder = () => {
+      if(Vars.content.getBy(ContentType.bullet).isEmpty()) Bullets.load();
+      if(Vars.content.getBy(ContentType.unit).isEmpty()) UnitTypes.load();
+      Blocks.groundFactory.plans.add(
+        new UnitPlan(UnitTypes.dagger, 60 * 15, [
+          new ItemStack(Items.silicon, 10),
+          new ItemStack(Items.lead, 10),
+        ])
+      );
+    };
+    Blocks.groundFactory.size = 3;
+    Blocks.groundFactory.consumePower(1.2);
   }
 }

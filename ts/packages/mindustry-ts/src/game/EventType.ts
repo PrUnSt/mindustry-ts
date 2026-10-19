@@ -92,6 +92,17 @@ export class BlockDestroyEvent{
 /** 对应 Java `EventType.WaveEvent`（`Logic.runWave()` 会 fire）。 */
 export class WaveEvent{ }
 
+/** 对应 Java `EventType.UnitCreateEvent`（UnitFactory 产出单位时 fire，C24）。 */
+export class UnitCreateEvent{
+  readonly unit: unknown;
+  readonly build: unknown;
+
+  constructor(unit: unknown, build: unknown){
+    this.unit = unit;
+    this.build = build;
+  }
+}
+
 /** 对应 Java `EventType.GameOverEvent`（`Logic.checkGameState()` 会 fire）。 */
 export class GameOverEvent{
   /** 获胜方队伍（`Team`；未移植 S3 泛化类型，用 unknown 保持事件可构造）。 */
