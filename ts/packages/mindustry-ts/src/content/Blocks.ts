@@ -111,6 +111,7 @@ import { GenericCrafter } from "../world/blocks/production/GenericCrafter.js";
 import { ConsumeGenerator } from "../world/blocks/power/ConsumeGenerator.js";
 import { SolarGenerator } from "../world/blocks/power/SolarGenerator.js";
 import { PowerNode } from "../world/blocks/power/PowerNode.js";
+import { Battery } from "../world/blocks/power/Battery.js";
 import { ConsumeItemFlammable } from "../world/consumers/ConsumeItemFlammable.js";
 import { ConsumeItemExplode } from "../world/consumers/ConsumeItemExplode.js";
 
@@ -163,6 +164,9 @@ export class Blocks{
 
   /** 电力节点（C22 · 手动拉线；`Java Blocks.java:2483-2489`）。 */
   static powerNode: PowerNode;
+
+  /** 电池（C23 · 缓冲储电；`Java Blocks.java:2510-2514`）。 */
+  static battery: Battery;
 
   /** Java `Blocks` 里的 `int wallHealthMultiplier = 4`（`Blocks.java:1706`）。 */
   private static readonly wallHealthMultiplier = 4;
@@ -427,5 +431,17 @@ export class Blocks{
     Blocks.powerNode.laserRange = 6;
     Blocks.powerNode.underBullets = true;
     Blocks.powerNode.crushFragile = true;
+
+    // ---- C23 电池（缓冲储电）----
+    // Java `Blocks.java:2510-2514`：`battery = new Battery("battery"){{
+    //   requirements(Category.power, with(Items.copper, 5, Items.lead, 20));
+    //   consumePowerBuffered(4000f); baseExplosiveness = 1f; }};`
+    Blocks.battery = new Battery("battery");
+    Blocks.battery.setRequirements(Category.power, [
+      new ItemStack(Items.copper, 5),
+      new ItemStack(Items.lead, 20),
+    ]);
+    Blocks.battery.consumePowerBuffered(4000);
+    Blocks.battery.baseExplosiveness = 1;
   }
 }

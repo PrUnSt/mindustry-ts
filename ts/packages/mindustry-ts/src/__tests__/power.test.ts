@@ -42,6 +42,7 @@ import { ConsumeItemFlammable } from "../world/consumers/ConsumeItemFlammable.js
 import { ConsumeGenerator, ConsumeGeneratorBuild } from "../world/blocks/power/ConsumeGenerator.js";
 import { PowerGraph } from "../world/blocks/power/PowerGraph.js";
 import { PowerNodeBuild } from "../world/blocks/power/PowerNode.js";
+import { Battery, BatteryBuild } from "../world/blocks/power/Battery.js";
 import { Point2 } from "@mindustry-ts/arc";
 import {
   GenericCrafter,
@@ -498,7 +499,11 @@ describe("power: ⑧ 确定性", () => {
 //     → 实测 **1 条变红**（`Tests 1 failed | 15 passed`）:
 //       「⑥ 烧燃料」`expected 2 to be 1`（第一件燃料永远吃不到）。
 //
-//  ⚠️ 全部已复原（下面这条断言在复原后仍为绿，用来证明复原生效）。
+//  ⚠️ 全部已复原（下面这条断言在复原后仍为绿，用来证明复原生效）。//
+//  ⑪ 把 `PowerGraph.chargeBatteries()` 里的 `battery.power.status += ...` 换成注释
+//     → 实测 **1 条变红**（`Tests 1 failed | 1 passed | 22 skipped`）:
+//       「⑩ 富余发电给电池充电」’ expected +0 to be close to 0.3’（充电增量为 0）。
+//     已复原。
 
 
 // ---------------------------------------------------------------------------------------
@@ -590,5 +595,84 @@ describe("power: ⑨ PowerNode 手动拉线（laser 连线）", () => {
     nodeA.configureLinks([]);
     expect(nodeA.power.links.size).toBe(0);
     expect(nodeB.power.links.size).toBe(0);
+  });
+});
+
+
+// ---------------------------------------------------------------------------------------
+// ⑩ Battery 缓冲储电 —— C23
+// ---------------------------------------------------------------------------------------
+//
+// ⚠️ 三个关键语义（都是 PowerGraph 的既有逻辑，本阶段只补「电池方块」本身）：
+//   · `outputsPower && consumesPower && consPower.buffered` → PowerGraph 分类进 `batteries`
+//     （既不是 producers 也不是 consumers），充放电由
+//     `chargeBatteries`/`useBatteries` 驱动；
+//   · 电池的 `power.status` = 「已存电 / 容量」（**不是**覆盖率）；
+//   · 富余发电 → `chargeBatteries(excess)`；供电不足 → `useBatteries(needed-produced)`。
+// 夹具用**小容量**电池（capacity 100）让充放速率线性可断言：
+//   · 充：excess 0.5/tick → `status += 0.5/100 = 0.005`/tick
+//   · 放：需 0.5/tick → `status -= 0.5/100 = 0.005`/tick，约 200 tick 放空
+
+function makeBattery(capacity: number): Battery{
+  const b = new Battery(nextName("power-battery"));
+  b.consumePowerBuffered(capacity);
+  b.init();
+  return b;
+}
+
+describe("power: ⑩ Battery 缓冲储电", () => {
+  test("注册的 battery 方块字段 + PowerGraph 分类进 batteries（不占 producers/consumers）", () => {
+    expect(Blocks.battery.consumesPower).toBe(true);
+    expect(Blocks.battery.outputsPower).toBe(true);
+    expect(Blocks.battery.update).toBe(false);
+    expect(Blocks.battery.consPower!.buffered).toBe(true);
+    expect(Blocks.battery.consPower!.capacity).toBe(4000);
+
+    const bat = place<BatteryBuild>(5, 5, Blocks.battery);
+    expect(bat.power.graph.batteries.size).toBe(1);
+    expect(bat.power.graph.consumers.size).toBe(0);
+    expect(bat.power.graph.producers.size).toBe(0);
+    expect(bat.power.graph.getTotalBatteryCapacity()).toBe(4000);
+    expect(bat.power.status).toBe(0);
+  });
+
+  test("富余发电给电池充电：每 60 tick status +0.3（excess 0.5 / capacity 100），用电方满供", () => {
+    const g = placeFueledCombustion(4, 5);
+    const bat = place<BatteryBuild>(5, 5, makeBattery(100));
+    const c = place<GenericCrafterBuild>(6, 5, makeCrafter(0.5));
+    c.items.setAmount(Items.coal, 10);
+
+    runTicks(2); // 走稳后记下起点（第 1 tick 已开始充，不假设为 0）
+    const before = bat.power.status;
+    runTicks(60);
+    expect(bat.power.status - before, "充电增量 = 60 * 0.005 = 0.3").toBeCloseTo(0.3, 6);
+    expect(g.power.graph.getBatteryStored()).toBeCloseTo(bat.power.status * 100, 6);
+    expect(c.power.status, "用电方满供 coverage=1").toBe(1);
+  });
+
+  test("供电不足时电池放电补足：coverage 从 2/3 拉回 1，放空后回落 2/3", () => {
+    const g = placeFueledCombustion(4, 5); // 产 1.0
+    const bat = place<BatteryBuild>(5, 5, makeBattery(100));
+    const c1 = place<GenericCrafterBuild>(6, 5, makeCrafter(0.75));
+    const c2 = place<GenericCrafterBuild>(5, 6, makeCrafter(0.75));
+    for(const c of [c1, c2]) c.items.setAmount(Items.coal, 10);
+
+    // 未充电的电池不改变 coverage（放电 0）
+    runTicks(2);
+    expect(c1.power.status).toBeCloseTo(2 / 3, 6);
+    expect(c2.power.status).toBeCloseTo(2 / 3, 6);
+
+    // 手动充满（等价 Java PowerTestFixture 的做法）→ 电池放电把 coverage 拉回 1
+    bat.power.status = 1;
+    runTicks(2);
+    expect(c1.power.status, "放电中 coverage=1").toBe(1);
+    expect(c2.power.status).toBe(1);
+    expect(bat.power.status, "每 tick 线性 -0.005").toBeCloseTo(1 - 2 * 0.005, 6);
+
+    // 放空（100/0.5=200 tick）→ coverage 回落 2/3
+    runTicks(250);
+    expect(bat.power.status).toBe(0);
+    expect(c1.power.status).toBeCloseTo(2 / 3, 6);
+    expect(c2.power.status).toBeCloseTo(2 / 3, 6);
   });
 });
