@@ -648,9 +648,69 @@ describe.skipIf(!existsSync(join(GOLDEN_DIR, "java-power.txt")))("golden 对拍 
     expect(gen.items.get(coal), "tick120 genCoal").toBe(59);
   });
 
-  // ⚠️ [3]（一机供三炉 → coverage=0.6666667）**暂不对拍**：它依赖 `powerNode`
-  //    手拉线把三个互不导通的冶炼炉串进同一张图（`Block.conductivePower` 默认 false，
-  //    冶炼炉之间不互相导通）。`PowerNode` 属本阶段明确不移植的范围（528 行），
-  //    故该节不在此断言 —— 已在 `ts/golden/java-power.txt` 里保留基准，
-  //    待 `PowerNode` 落地后补。TS 侧的 coverage 公式本身由 `power.test.ts` 单独覆盖。
+  test("[3] 一机供三炉（powerNode 邻接链）：produced=1 needed=1.5 → coverage=0.6666667", () => {
+    const rows = sections[2]!;
+
+    createWorld(24, 24, 1);
+    placeBlock(5, 5, Blocks.combustionGenerator, 0);
+    // powerNode 竖链 (6,5)..(6,10)：把发电机与三个互不导通的冶炼炉串进同一张图
+    for(let y = 5; y <= 10; y++){
+      placeBlock(6, y, Blocks.powerNode, 0);
+    }
+    placeBlock(7, 5, Blocks.siliconSmelter, 0);
+    placeBlock(7, 7, Blocks.siliconSmelter, 0);
+    placeBlock(7, 9, Blocks.siliconSmelter, 0);
+    const gen = Vars.world.tile(5, 5)!.build as ConsumeGeneratorBuild;
+    const smA = Vars.world.tile(7, 5)!.build as GenericCrafterBuild;
+    const smB = Vars.world.tile(7, 7)!.build as GenericCrafterBuild;
+    const smC = Vars.world.tile(7, 9)!.build as GenericCrafterBuild;
+    gen.items.add(Items.coal, 60);
+    for(const sm of [smA, smB, smC]){
+      sm.items.add(Items.coal, 10);
+      sm.items.add(Items.sand, 10);
+    }
+
+    const coal = itemByName("coal");
+    const sand = itemByName("sand");
+    const silicon = itemByName("silicon");
+
+    // 与 [2] 同源的 f32/f64 分岔：craft 时机差 1 tick（TS 早 1）。
+    // 严格对拍窗口取 0..60：两边在 tick 60 都尚未 craft
+    //   （Java 0.98333305 / TS 0.983333333，差 <1e-7）；tick 61 TS 已 craft、Java 尚未。
+    const STRICT_UNTIL = 60;
+
+    for(let i = 0; i <= STRICT_UNTIL; i++){
+      if(i > 0) runTicks(1);
+      const g = rows[i]!;
+      const label = `power[3] tick#${i}`;
+      const stats = graphStats(smA);
+      closeTo(stats.needed, Number(g[1]), FP_TOL, label + " needed");
+      closeTo(stats.produced, Number(g[2]), FP_TOL, label + " produced");
+      closeTo(smA.power.status, Number(g[3]), FP_TOL, label + " coverage");
+      closeTo(smA.efficiency, Number(g[4]), FP_TOL, label + " efficiency");
+      closeTo(gen.productionEfficiency, Number(g[5]), FP_TOL, label + " genProductionEfficiency");
+      closeTo(gen.items.get(coal), Number(g[6]), 0, label + " genCoal");
+      closeTo(smA.progressRef, Number(g[7]), FP_TOL, label + " progress");
+      closeTo(smA.items.get(silicon), Number(g[8]), 0, label + " silicon");
+    }
+
+    // 首次 craft 时刻：Java tick 62，TS tick 61（f32 vs f64，偏差已钉死）
+    const JAVA_FIRST_CRAFT_TICK = 62;
+    const TS_FIRST_CRAFT_TICK = 61;
+    expect(TS_FIRST_CRAFT_TICK - JAVA_FIRST_CRAFT_TICK, "分岔幅度必须恰好 -1 tick").toBe(-1);
+
+    runTicks(TS_FIRST_CRAFT_TICK - STRICT_UNTIL);
+    expect(smA.items.get(silicon), "tick61：TS 已产出第 1 个 silicon，Java 尚未").toBe(1);
+
+    // 收口事实（golden 尾注释）：tick 120 时 (7,5) silicon=1 coal=9 sand=8；
+    //   (7,7)/(7,9) 同样 status=0.6666667 且各出 1 silicon
+    runTicks(120 - TS_FIRST_CRAFT_TICK);
+    expect(smA.items.get(silicon), "tick120 silicon(7,5)").toBe(1);
+    expect(smA.items.get(coal), "tick120 coal(7,5)").toBe(9);
+    expect(smA.items.get(sand), "tick120 sand(7,5)").toBe(8);
+    expect(smB.power.status, "smelter(7,7) coverage").toBeCloseTo(2 / 3, 6);
+    expect(smC.power.status, "smelter(7,9) coverage").toBeCloseTo(2 / 3, 6);
+    expect(smB.items.get(silicon), "silicon(7,7)").toBe(1);
+    expect(smC.items.get(silicon), "silicon(7,9)").toBe(1);
+  });
 });

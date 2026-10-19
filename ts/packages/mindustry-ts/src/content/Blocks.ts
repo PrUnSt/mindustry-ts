@@ -110,6 +110,7 @@ import { CoreBlock } from "../world/blocks/storage/CoreBlock.js";
 import { GenericCrafter } from "../world/blocks/production/GenericCrafter.js";
 import { ConsumeGenerator } from "../world/blocks/power/ConsumeGenerator.js";
 import { SolarGenerator } from "../world/blocks/power/SolarGenerator.js";
+import { PowerNode } from "../world/blocks/power/PowerNode.js";
 import { ConsumeItemFlammable } from "../world/consumers/ConsumeItemFlammable.js";
 import { ConsumeItemExplode } from "../world/consumers/ConsumeItemExplode.js";
 
@@ -159,6 +160,9 @@ export class Blocks{
   static combustionGenerator: ConsumeGenerator;
   /** 太阳能板（C21 · 电力；`Java Blocks.java:2619-2623`）。 */
   static solarPanel: SolarGenerator;
+
+  /** 电力节点（C22 · 手动拉线；`Java Blocks.java:2483-2489`）。 */
+  static powerNode: PowerNode;
 
   /** Java `Blocks` 里的 `int wallHealthMultiplier = 4`（`Blocks.java:1706`）。 */
   private static readonly wallHealthMultiplier = 4;
@@ -409,5 +413,19 @@ export class Blocks{
       new ItemStack(Items.silicon, 8),
     ]);
     Blocks.solarPanel.powerProduction = 0.12;
+
+    // ---- C22 电力节点（手动拉线）----
+    // Java `Blocks.java:2483-2489`：`powerNode = new PowerNode("power-node"){{
+    //   requirements(Category.power, with(Items.copper, 2, Items.lead, 6));
+    //   maxNodes = 10; laserRange = 6; underBullets = true; crushFragile = true; }};`
+    Blocks.powerNode = new PowerNode("power-node");
+    Blocks.powerNode.setRequirements(Category.power, [
+      new ItemStack(Items.copper, 2),
+      new ItemStack(Items.lead, 6),
+    ]);
+    Blocks.powerNode.maxNodes = 10;
+    Blocks.powerNode.laserRange = 6;
+    Blocks.powerNode.underBullets = true;
+    Blocks.powerNode.crushFragile = true;
   }
 }

@@ -432,7 +432,15 @@ export abstract class BuildingComp implements Healthc, Teamc{
   powerGraphRemoved(): void{
     if(this.power === null) return;
     this.power.graph.remove(this);
-    this.power.links.length = 0;
+    // Java :1174-1180：手动连线是**双向**的，摘除自己时要同步清掉对方 links 里的反向记录。
+    // `world.build(pos)` 由 `PowerModule.resolve()` 提供（生成文件无法 import Vars）。
+    for(let i = 0; i < this.power.links.size; i++){
+      const other: any = this.power.resolve(this.power.links.items[i]!);
+      if(other !== null && other.power !== null){
+        other.power.links.removeValue(this.pos());
+      }
+    }
+    this.power.links.clear();
   }
 
   /** 是否向 `other` 导电（Java `conductsTo`，:1184-1186）。绝缘方块返回 false。 */
@@ -447,8 +455,9 @@ export abstract class BuildingComp implements Healthc, Teamc{
    *     彼此**不导通** —— 电力只能靠发电机/导线/节点传播，耗电方块之间不互相传。
    *     这也是 `Block.consumesPower` 默认值必须与 Java 一致（true）的原因。
    *
-   * 未移植: `power.links` 的手动连线分支（:1201-1204，属 `PowerNode`）—— 依赖
-   *         `IntSeq` 解包与 `Vars.world.build()`，随 `PowerNode` 一起做（计划 §9）。
+   * ⚠️ 第二段（:1201-1204，C22 补齐）: `power.links` 里的手动 laser 连线——即使不相邻
+   *    也并入图。`world.build(pos)` 由 `PowerModule.resolve()` 提供（生成文件无法
+   *    import Vars，见 `PowerModule.ts` 文件头）。
    */
   getPowerConnections(out: any[]): any[]{
     out.length = 0;
@@ -470,6 +479,12 @@ export abstract class BuildingComp implements Healthc, Teamc{
         }
       }
       if(!linked) out.push(other);
+    }
+
+    // 手动 laser 连线（Java :1201-1204）—— 与邻接传导并列的第二条电源路径。
+    for(let i = 0; i < this.power.links.size; i++){
+      const link: any = this.power.resolve(this.power.links.items[i]!);
+      if(link !== null && link.power !== null && link.team === this.team) out.push(link);
     }
     return out;
   }

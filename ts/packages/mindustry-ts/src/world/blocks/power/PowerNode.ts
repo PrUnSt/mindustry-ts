@@ -1,0 +1,229 @@
+// 源: core/src/mindustry/world/blocks/power/PowerNode.java (529 行)
+//
+// 移植范围（C22）: **手动拉线（laser 连线）的图语义** —— 构造器全部可观测字段、
+//   `overlaps`（Building 重载 + Tile 核心实现）、`linkValid`（2/3 参数）、以及
+//   `PowerNodeBuild` 的 `created` / `configure` / `configureLinks` / `config` / `linked` /
+//   `dropped`。这是让 `java-power.txt [3]`（一机供三炉 → coverage=0.6666667）与
+//   「玩家用 powerNode 手动拉线」真正成立的模拟层。
+//
+// ⚠️ 本阶段明确**不移植**（逐条写清，别当漏移植；均为放置/渲染/UI 层，计划 §9）:
+//   - `placed()` / `getPotentialLinks()` / `getNodeLinks()` / `insulated()`（:157-347, 374-386,
+//     :391-404）—— **放置自动连线**。Java 依赖 `team.data().buildingTree`（空间索引，TS 未移植）
+//     与 `World.raycast`（`World.java` 的 `raycastEach*`/`raycast` 标注未移植），且 `placed()`
+//     只在玩家/机器人放置时被 `Build`/`Placement` 层触发 —— headless/golden 的 `Tile.setBlock`
+//     **不**调它。待放置/UI 层落地时，把 buildingTree 换成全图扫描、raycast 换成线性插值并注记分叉。
+//   - 渲染 / 音效 / UI: `@Load` 贴图（laser/laserEnd）、`drawLaser`/`setupColor`/`drawPlace`/
+//     `drawConfigure`/`drawSelect`/`drawCached`/`draw`（:161-216, 440-513）、`setBars`（:105-123）、
+//     `setStats`（:144-149）、`changePlacementPath`/`planConfigClipSize`/`drawPlanConfigTop`
+//     （:158-160, :331-356）—— 计划 §9。
+//   - `config(Integer.class, ...)` / `config(Point2[].class, ...)`（:62-101）在 Java 注册到
+//     `Block.configurations`，由 `Building.configure()` 分发。TS **没有**这套配置分发系统
+//     （`Block.ts` 文件头的 `configurations` 整块未移植）→ 把两个 handler 的**方法体**直接落成
+//     `PowerNodeBuild.configure(pos)` / `configureLinks(points)`。`configure(pos)` ≡ Java 的
+//     「Integer 配置被调用一次」。语义逐行一致。`configurable` / `ignoreResizeConfig` /
+//     `delayLandingConfig` / `schematicPriority` 均属该未移植系统，不设字段。
+//
+// ⚠️ 为什么 powerNode 必须 `consumesPower=false, outputsPower=false`（PowerNode.java:47-48）:
+//   `PowerGraph.add()`（PowerGraph.java:290-299）按这两个标志把建筑分进 producers/consumers/
+//   batteries；两者都 false → 只进 `all`（纯导体，不计产耗）。同时
+//   `BuildingComp.getPowerConnections()`（BuildingComp.java:1195）的「两个纯耗电方块互不导通」
+//   判据因此**不**拦它 —— 电力靠邻接 + 手动 laser 连线传播。
+// ⚠️ `update=false`（PowerNode.java:57-58）: 节点不需要逐 tick 更新；`PowerBlock` 的默认
+//   `update=true` 被覆掉。headless 下它仍会创建 `Building`（`hasPower=true` 有电力模块），
+//   但不进 `Groups.build`（`Tile.changeBuild` 的 `shouldAdd` 判据）—— 与 Java 一致。
+// ⚠️ `group = BlockGroup.power`（继承自 `PowerBlock`）: 电力方块之间可互相替换。
+
+import { IntSeq, Point2, Rect } from "@mindustry-ts/arc";
+import { Vars } from "../../../Vars.js";
+import { Building } from "../../../gen/Building.js";
+import { Env } from "../../meta/Env.js";
+import { PowerGraph } from "./PowerGraph.js";
+import { PowerBlock } from "./PowerBlock.js";
+import type { Tile } from "../../Tile.js";
+
+/** 对应 `mindustry.world.blocks.power.PowerNode`。 */
+export class PowerNode extends PowerBlock{
+  /** Java `protected static float maxRange`（:25）—— 全图最大 laser 射程（放置预览用）。 */
+  static maxRange = 0;
+
+  /** Java `public float laserRange = 6`（:33）—— laser 连线最大距离（格）。内容注册可覆写。 */
+  laserRange = 6;
+  /** Java `public int maxNodes = 3`（:34）—— 单节点最大连线数（`Blocks.powerNode` 覆写为 10）。 */
+  maxNodes = 3;
+  /** Java `public boolean autolink = true`（:35）—— 放置自动连线。本阶段未移植（见文件头）。 */
+  autolink = true;
+  /** Java `public boolean drawRange = true`（:35）—— 放置时画射程圈。渲染层，仅留值。 */
+  drawRange = true;
+  /** Java `public boolean sameBlockConnection = false`（:35）—— 只连同类方块。 */
+  sameBlockConnection = false;
+  /** Java `public float laserScale = 0.25f`（:36）—— 渲染层，仅留值。 */
+  laserScale = 0.25;
+  /** Java `public boolean useLod = true`（:37）—— 渲染层，仅留值。 */
+  useLod = true;
+  /** Java `public float powerLayer = Layer.power`（:38）—— 渲染层，仅留值。 */
+  powerLayer = 0;
+
+  /** 对应 Java `PowerNode(String name)`（:41-60）。 */
+  constructor(name: string){
+    super(name);
+    // Java 原文（:42-58）逐条。有渲染/UI/未移植配置系统副作用的用注释标注、不设字段。
+    this.consumesPower = false;
+    this.outputsPower = false;
+    this.canOverdrive = false;
+    this.swapDiagonalPlacement = true; // 放置体验（`changePlacementPath` 配套），值对齐
+    this.drawDisabled = false;
+    this.envEnabled |= Env.space;
+    this.destructible = true;
+    this.drawCached = true; // 渲染层，值对齐
+    // Java: `update = false;` —— 节点不需要逐 tick 更新（覆掉 `PowerBlock` 的默认 true）。
+    this.update = false;
+
+    // 陷阱 #6：显式注册建筑工厂（子类在自己的构造器里覆盖成自己的 Build 类）
+    this.buildType = () => new PowerNodeBuild();
+  }
+
+  /**
+   * Java `Intersector.overlaps(Circle, Rect)`（arc `Intersector.java:36-44`）的方法体。
+   * arc-ts 的 `Intersector` 尚未移植圆-矩形重载 → 按 Java 原文本地实现。
+   */
+  private static circleRectOverlaps(cx: number, cy: number, radius: number, r: Rect): boolean{
+    const closestX = cx < r.x ? r.x : (cx > r.x + r.width ? r.x + r.width : cx);
+    const closestY = cy < r.y ? r.y : (cy > r.y + r.height ? r.y + r.height : cy);
+    const dx = closestX - cx;
+    const dy = closestY - cy;
+    return (dx * dx + dy * dy) < (radius * radius);
+  }
+
+  /** 对应 Java `overlaps(float, float, Tile, float)`（:203-208）—— 圆 vs 方块 hitbox。 */
+  overlapsTile(srcx: number, srcy: number, other: Tile, range: number): boolean{
+    return PowerNode.circleRectOverlaps(srcx, srcy, range, other.getHitbox(new Rect()));
+  }
+
+  /** 对应 Java `overlaps(Building, Building, float)`（:209-211）。 */
+  overlaps(src: Building, other: Building, range: number): boolean{
+    return this.overlapsTile(src.x, src.y, other.tile, range);
+  }
+
+  /**
+   * 对应 Java `linkValid(Building, Building)`（:358-359）。
+   * ⚠️ 注意：Java 的 Integer 配置处理体（:87）在连线分支里**会**调它 —— 这是
+   *   `configure(pos)` 能否接受一条手动连线的唯一闸门。
+   */
+  linkValid(tile: Building, link: Building | null): boolean;
+  /** 对应 Java `linkValid(Building, Building, boolean)`（:362-372）。 */
+  linkValid(tile: Building, link: Building | null, checkMaxNodes: boolean): boolean;
+  linkValid(tile: Building, link: Building | null, checkMaxNodes = true): boolean{
+    if(tile === link || link === null || !link.block.hasPower || !link.block.connectedPower
+      || tile.team !== link.team || (this.sameBlockConnection && tile.block !== link.block)) return false;
+
+    if(this.overlaps(tile, link, this.laserRange * Vars.tilesize)
+      || (link.block instanceof PowerNode && this.overlaps(link, tile, (link.block as PowerNode).laserRange * Vars.tilesize))){
+      if(checkMaxNodes && link.block instanceof PowerNode){
+        const node = link.block as PowerNode;
+        return link.power.links.size < node.maxNodes || link.power.links.contains(tile.pos());
+      }
+      return true;
+    }
+    return false;
+  }
+}
+
+/**
+ * 对应 Java `PowerNode.PowerNodeBuild`（:388-528）。
+ *
+ * ⚠️ `configure(pos)` / `configureLinks(points)` 在 Java 里是**块级配置 handler**（经
+ *   `Block.configurations` + `Building.configure()` 分发）；TS 无配置分发系统，把方法体
+ *   直接落在建筑上。语义等价（见文件头）。
+ */
+export class PowerNodeBuild extends Building{
+  /** ⚠️ 必须显式声明 public 构造器（`gen/Building.ts` 的构造器是 `protected`，不声明会 TS2674）。 */
+  constructor(){
+    super();
+  }
+
+  /** Java 的 `PowerNodeBuild` 是内部类，直接读外部 `PowerNode.this.xxx`；TS 显式取回。 */
+  protected get node(): PowerNode{
+    return this.block as PowerNode;
+  }
+
+  /** 对应 Java `created()`（:389-393）—— 放置/加载时更新全图最大射程。 */
+  override created(): void{
+    if(this.node.autolink && this.node.laserRange > PowerNode.maxRange){
+      PowerNode.maxRange = this.node.laserRange;
+    }
+    super.created();
+  }
+
+  /**
+   * 对应 Java 的 `config(Integer.class, ...)` 处理体（:64-90）—— 一次「连 / 断」。
+   *
+   * ⚠️ 断线的图重建是**关键语义**: 摘掉一条 laser 连线后原图可能裂成两张，
+   *   Java 对两端各 `reflow` 一次（`PowerGraph.reflow` 按 `getPowerConnections` BFS）。
+   *   别简化成「原地删链接」—— 那会让对端仍留在旧图里。
+   */
+  configure(pos: number): void{
+    const power = this.power;
+    const other = Vars.world.build(pos);
+    const contains = power.links.contains(pos);
+    const valid = other !== null && other.power !== null;
+
+    if(contains){
+      // unlink（Java :69-85）
+      power.links.removeValue(pos);
+      if(valid) other.power.links.removeValue(this.pos());
+
+      const newgraph = new PowerGraph();
+      // 从本节点这一侧重新泛洪
+      newgraph.reflow(this);
+      newgraph.update();
+
+      if(valid && other.power.graph !== newgraph){
+        // 对端不在同一张新图里 → 另一侧也要重建
+        const og = new PowerGraph();
+        og.reflow(other);
+        og.update();
+      }
+    }else if(this.node.linkValid(this, other) && valid && power.links.size < this.node.maxNodes){
+      // link（Java :87-96）
+      power.links.addUnique(other.pos());
+      if(other.team === this.team){
+        other.power.links.addUnique(this.pos());
+      }
+      power.graph.addGraph(other.power.graph);
+    }
+  }
+
+  /**
+   * 对应 Java 的 `config(Point2[].class, ...)` 处理体（:97-101）—— 整体重设连线列表。
+   * 先按旧列表逐个 `configure`（即逐个断开），再按新列表逐个连上。
+   */
+  configureLinks(points: Point2[]): void{
+    const old = new IntSeq(this.power.links);
+    for(let i = 0; i < old.size; i++){
+      this.configure(old.get(i)!);
+    }
+    for(const p of points){
+      this.configure(Point2.pack(p.x + this.tileX(), p.y + this.tileY()));
+    }
+  }
+
+  /** 对应 Java `config()`（:524-529）—— 相对坐标的连线列表（UI/存档用）。 */
+  config(): Point2[]{
+    const out: Point2[] = new Array<Point2>(this.power.links.size);
+    for(let i = 0; i < out.length; i++){
+      out[i] = Point2.unpack(this.power.links.get(i)!).sub(this.tile.x, this.tile.y);
+    }
+    return out;
+  }
+
+  /** 对应 Java `linked(Building)`（:515-517）。 */
+  linked(other: Building): boolean{
+    return this.power.links.contains(other.pos());
+  }
+
+  /** 对应 Java `dropped()`（:407-410）—— 被拆除/掉落时清空连线并重算电网。 */
+  dropped(): void{
+    this.power.links.clear();
+    this.updatePowerGraph();
+  }
+}

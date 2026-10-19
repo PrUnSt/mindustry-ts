@@ -24,10 +24,21 @@
 // `status` / `init` 的语义（Java 注释）:
 //   非缓冲消费者：这是「可供给的电力需求百分比」，< 1 时方块以降低的效率工作。
 //   缓冲消费者：这是「已存电量 / 最大容量」的百分比。
+//
+// ⚠️ `resolve()` 是 **TS 边界适配器**（Java 没有这个方法，理由必须知道）:
+//   `PowerGraph.reflow()` / `BuildingComp.getPowerConnections()`（C22 起）要把
+//   `links` 里的**打包坐标**解成 `Building`，Java 写的是 `world.build(pos)`
+//   （`BuildingComp.java:1201-1204`）。而 `gen/Building.ts` 是 codegen 产物，
+//   只能 import「组件接口名 / Groups / 基类名」，**无法 import `Vars`**（`Vars.world`）。
+//   沿「边界处由手写代码收窄」的既定模式（`Tile.rebuildProximity` / `Block.newPower`），
+//   把「打包坐标 → Building」的查找放在本模块（手写文件、可 import `Vars`），
+//   生成代码经 `power`（`any`）直接调 `resolve()`。语义等价。
 
 import { IntSeq } from "@mindustry-ts/arc";
+import { Vars } from "../../Vars.js";
 import { PowerGraph } from "../blocks/power/PowerGraph.js";
 import { BlockModule } from "./BlockModule.js";
+import type { Building } from "../../gen/Building.js";
 
 /** 对应 `mindustry.world.modules.PowerModule`。 */
 export class PowerModule extends BlockModule{
@@ -44,4 +55,13 @@ export class PowerModule extends BlockModule{
    * `power.graph.add(self())`（`gen/Building.ts:204-209`）。
    */
   graph: PowerGraph = new PowerGraph();
+
+  /**
+   * TS 边界适配器：把 `links` 里的**打包坐标**解析成 `Building`。
+   * 等价 Java `world.build(pos)`（`BuildingComp.java:1201-1204`），无则返回 null。
+   * 见文件头的「为什么在本类」说明。
+   */
+  resolve(pos: number): Building | null{
+    return Vars.world.build(pos);
+  }
 }

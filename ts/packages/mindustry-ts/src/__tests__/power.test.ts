@@ -41,6 +41,8 @@ import { ConsumeItemExplode } from "../world/consumers/ConsumeItemExplode.js";
 import { ConsumeItemFlammable } from "../world/consumers/ConsumeItemFlammable.js";
 import { ConsumeGenerator, ConsumeGeneratorBuild } from "../world/blocks/power/ConsumeGenerator.js";
 import { PowerGraph } from "../world/blocks/power/PowerGraph.js";
+import { PowerNodeBuild } from "../world/blocks/power/PowerNode.js";
+import { Point2 } from "@mindustry-ts/arc";
 import {
   GenericCrafter,
   GenericCrafterBuild
@@ -497,3 +499,96 @@ describe("power: ⑧ 确定性", () => {
 //       「⑥ 烧燃料」`expected 2 to be 1`（第一件燃料永远吃不到）。
 //
 //  ⚠️ 全部已复原（下面这条断言在复原后仍为绿，用来证明复原生效）。
+
+
+// ---------------------------------------------------------------------------------------
+// ⑨ PowerNode 手动拉线（laser 连线）—— C22
+// ---------------------------------------------------------------------------------------
+//
+// ⚠️ 本节三个前提（与 golden [3] 同一套语义）：
+//   · powerNode 是纯导体：`consumesPower=false, outputsPower=false` → 只进 `all`，不计产耗；
+//   · 邻接传导 + 手动 `configure(pos)` 拉线 是两条并立的入图路径；
+//   · `configure` 断线时对两端各 `reflow` 一次（图可能裂成两张）。
+// 不用唯一名（`Blocks.powerNode` 是已注册的真实方块；发电机/工厂用上面的测试夹具，size 1）。
+
+describe("power: ⑨ PowerNode 手动拉线（laser 连线）", () => {
+  test("powerNode 方块字段：纯导体（consumesPower/outputsPower=false）+ hasPower/update 正确", () => {
+    expect(Blocks.powerNode.consumesPower).toBe(false);
+    expect(Blocks.powerNode.outputsPower).toBe(false);
+    expect(Blocks.powerNode.hasPower).toBe(true);
+    expect(Blocks.powerNode.update).toBe(false);
+    expect(Blocks.powerNode.connectedPower).toBe(true);
+  });
+
+  test("两个相邻 powerNode 靠邻接并入同图（纯导体不拆图）", () => {
+    const a = place<PowerNodeBuild>(5, 5, Blocks.powerNode);
+    const b = place<PowerNodeBuild>(6, 5, Blocks.powerNode);
+    expect(a.power.graph).toBe(b.power.graph);
+    // 纯导体：不在 producers/consumers/batteries 里，只进 all
+    expect(a.power.graph.all.size).toBe(2);
+    expect(a.power.graph.producers.size).toBe(0);
+    expect(a.power.graph.consumers.size).toBe(0);
+    expect(a.power.graph.batteries.size).toBe(0);
+  });
+
+  test("非相邻节点 configure 拉线 → 并入同图并供电；再次 configure 断开 → 裂图断电", () => {
+    // 布景（全 size 1）：gen(4,5) -[邻接]- nodeA(5,5)    nodeB(9,5) -[邻接]- crafter(10,5)
+    //   nodeA 与 nodeB 相距 4 格（laserRange=6 内）、彼此不相邻 —— 必须靠 configure 才连通。
+    const g = placeFueledCombustion(4, 5);
+    const nodeA = place<PowerNodeBuild>(5, 5, Blocks.powerNode);
+    const nodeB = place<PowerNodeBuild>(9, 5, Blocks.powerNode);
+    const c = place<GenericCrafterBuild>(10, 5, makeCrafter(0.5));
+    c.items.setAmount(Items.coal, 10);
+
+    // 连线前：两张图（gen+nodeA / nodeB+crafter）
+    expect(nodeA.power.graph).not.toBe(nodeB.power.graph);
+    expect(g.power.graph).toBe(nodeA.power.graph);
+    expect(c.power.graph).toBe(nodeB.power.graph);
+    expect(nodeA.power.links.size).toBe(0);
+
+    // 手动拉线：nodeA ↔ nodeB
+    nodeA.configure(nodeB.pos());
+    expect(nodeA.power.graph).toBe(nodeB.power.graph);
+    expect(nodeA.power.links.size).toBe(1);
+    expect(nodeB.power.links.size).toBe(1); // 双向记录
+    expect(g.power.graph.all.size).toBe(4); // gen+nodeA+nodeB+crafter 同图
+
+    runTicks(2);
+    expect(c.power.status, "拉线后 coverage===1").toBe(1);
+    expect(c.efficiency, "拉线后效率 1").toBe(1);
+
+    // 再次 configure → 断开。图裂成两张，crafter 丧失电源。
+    nodeA.configure(nodeB.pos());
+    expect(nodeA.power.graph).not.toBe(nodeB.power.graph);
+    expect(nodeA.power.links.size).toBe(0);
+    expect(nodeB.power.links.size).toBe(0);
+
+    runTicks(2);
+    expect(c.power.status, "断开后 coverage===0").toBe(0);
+    expect(c.efficiency, "断开后效率 0").toBe(0);
+  });
+
+  test("linkValid 拒收超距连线（laserRange=6 之外）→ configure 是 no-op", () => {
+    const nodeA = place<PowerNodeBuild>(5, 5, Blocks.powerNode);
+    const nodeC = place<PowerNodeBuild>(14, 5, Blocks.powerNode); // 相距 9 格 > 6
+    expect(nodeA.power.graph).not.toBe(nodeC.power.graph);
+    nodeA.configure(nodeC.pos());
+    expect(nodeA.power.graph).not.toBe(nodeC.power.graph);
+    expect(nodeA.power.links.size).toBe(0);
+  });
+
+  test("config() 返回相对连线坐标；configureLinks([]) 清空全部连线", () => {
+    const nodeA = place<PowerNodeBuild>(5, 5, Blocks.powerNode);
+    const nodeB = place<PowerNodeBuild>(9, 5, Blocks.powerNode);
+    nodeA.configure(nodeB.pos());
+    const cfg = nodeA.config();
+    expect(cfg.length).toBe(1);
+    expect(cfg[0]!.x).toBe(4); // nodeB(9,5) - nodeA(5,5)
+    expect(cfg[0]!.y).toBe(0);
+
+    // configureLinks([]) → 逐个断开旧链接（Java Point2[] 配置的「clear old」路径）
+    nodeA.configureLinks([]);
+    expect(nodeA.power.links.size).toBe(0);
+    expect(nodeB.power.links.size).toBe(0);
+  });
+});
