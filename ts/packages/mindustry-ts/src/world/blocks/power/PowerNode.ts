@@ -6,12 +6,13 @@
 //   `dropped`。这是让 `java-power.txt [3]`（一机供三炉 → coverage=0.6666667）与
 //   「玩家用 powerNode 手动拉线」真正成立的模拟层。
 //
-// ⚠️ 本阶段明确**不移植**（逐条写清，别当漏移植；均为放置/渲染/UI 层，计划 §9）:
-//   - `placed()` / `getPotentialLinks()` / `getNodeLinks()` / `insulated()`（:157-347, 374-386,
-//     :391-404）—— **放置自动连线**。Java 依赖 `team.data().buildingTree`（空间索引，TS 未移植）
-//     与 `World.raycast`（`World.java` 的 `raycastEach*`/`raycast` 标注未移植），且 `placed()`
-//     只在玩家/机器人放置时被 `Build`/`Placement` 层触发 —— headless/golden 的 `Tile.setBlock`
-//     **不**调它。待放置/UI 层落地时，把 buildingTree 换成全图扫描、raycast 换成线性插值并注记分叉。
+// ⚠️ C25 已落地“放置自动连线”：`placed()` / `getPotentialLinks()` / `getNodeLinks()` /
+//   `insulated()`（:157-347, 374-386, :391-404）。两处与 Java 的分岔已注记（见方法内）:
+//   `team.data().buildingTree`（空间索引未移植）→ 激光范围矩形扫描；`World.raycast`未移植
+//   → 本文件内部实现 Bresenham 登影（同源）。
+// ⚠️ 引发时机与 Java 一致：`placed()` 只在正式放置（`Build.beginPlace`）后被调；
+//   headless/golden 的 `Tile.setBlock` **不**调它。基类 `BuildingComp.placed()` 的
+//   “任意电力方块自动连到附近节点”在 `Tile.afterPlaced`（边界适配器）。
 //   - 渲染 / 音效 / UI: `@Load` 贴图（laser/laserEnd）、`drawLaser`/`setupColor`/`drawPlace`/
 //     `drawConfigure`/`drawSelect`/`drawCached`/`draw`（:161-216, 440-513）、`setBars`（:105-123）、
 //     `setStats`（:144-149）、`changePlacementPath`/`planConfigClipSize`/`drawPlanConfigTop`
@@ -39,7 +40,10 @@ import { Building } from "../../../gen/Building.js";
 import { Env } from "../../meta/Env.js";
 import { PowerGraph } from "./PowerGraph.js";
 import { PowerBlock } from "./PowerBlock.js";
+import { Edges } from "../../Edges.js";
+import { Team } from "../../../game/Team.js";
 import type { Tile } from "../../Tile.js";
+import type { Block } from "../../Block.js";
 
 /** 对应 `mindustry.world.blocks.power.PowerNode`。 */
 export class PowerNode extends PowerBlock{
@@ -99,6 +103,21 @@ export class PowerNode extends PowerBlock{
     return PowerNode.circleRectOverlaps(srcx, srcy, range, other.getHitbox(new Rect()));
   }
 
+  /** 对应 Java `overlaps(float, float, Tile, Block, float)`（:197-201）—— 圆 vs 按 offset 居中的方块矩形。 */
+  overlapsTileBlock(srcx: number, srcy: number, other: Tile, otherBlock: Block, range: number): boolean{
+    return PowerNode.circleRectOverlaps(
+      srcx,
+      srcy,
+      range,
+      new Rect().setCentered(
+        other.worldx() + otherBlock.offset,
+        other.worldy() + otherBlock.offset,
+        otherBlock.size * Vars.tilesize,
+        otherBlock.size * Vars.tilesize
+      )
+    );
+  }
+
   /** 对应 Java `overlaps(Building, Building, float)`（:209-211）。 */
   overlaps(src: Building, other: Building, range: number): boolean{
     return this.overlapsTile(src.x, src.y, other.tile, range);
@@ -126,6 +145,187 @@ export class PowerNode extends PowerBlock{
     }
     return false;
   }
+
+  /** Java `protected final static ObjectSet<PowerGraph> graphs`（:24）—— 防重复连线的共享集合。 */
+  private static readonly linkGraphs = new Set<PowerGraph>();
+
+  /** Java `Building.dst2(Position)`（arc `Position.dst2`）的局部实现。 */
+  private static dst2(a: Building, tile: Tile): number{
+    const dx = tile.drawx() - a.x;
+    const dy = tile.drawy() - a.y;
+    return dx * dx + dy * dy;
+  }
+
+  /** Java `World.raycast`（`World.java:587-606`，Bresenham）的布尔版本地实现。 */
+  private static raycast(x1: number, y1: number, x2: number, y2: number, accept: (x: number, y: number) => boolean): boolean{
+    let x = x1;
+    let y = y1;
+    const dx = Math.abs(x2 - x);
+    const sx = x < x2 ? 1 : -1;
+    const dy = Math.abs(y2 - y);
+    const sy = y < y2 ? 1 : -1;
+    let err = dx - dy;
+    for(;;){
+      if(accept(x, y)) return true;
+      if(x === x2 && y === y2) return false;
+      const e2 = 2 * err;
+      if(e2 > -dy){
+        err -= dy;
+        x += sx;
+      }
+      if(e2 < dx){
+        err += dx;
+        y += sy;
+      }
+    }
+  }
+
+  /**
+   * 对应 Java `insulated(int, int, int, int)`（:382-386）—— 两点连线上的建筑是否绝缘。
+   * ⚠️ `World.raycast` 未移植 → 用本文件的 `raycast`（Bresenham 同源）。
+   */
+  static insulated(x: number, y: number, x2: number, y2: number): boolean;
+  /** 对应 Java `insulated(Tile, Tile)`（:374-376）。 */
+  static insulated(tileA: Tile, tileB: Tile): boolean;
+  static insulated(a: Tile | number, b: Tile | number, c?: number, d?: number): boolean{
+    if(typeof a === "number"){
+      return PowerNode.raycast(a, b as number, c!, d!, (wx, wy) => {
+        const build = Vars.world.build(wx, wy);
+        return build !== null && build.block.insulated;
+      });
+    }
+    const t1 = a as Tile;
+    const t2 = b as Tile;
+    return PowerNode.insulated(t1.x, t1.y, t2.x, t2.y);
+  }
+
+  /**
+   * 对应 Java `getPotentialLinks(Tile, Team, Cons<Building>)`（:222-275）—— 放置自动连线的扫描。
+   * ⚠️ 分岔：Java 用 `team.data().buildingTree.intersect(...)`（空间索引）收候选；TS 未移植
+   *   → 用「激光范围矩形」逐格 `world.build` 扫描（候选集等价，树只是加速）。
+   */
+  getPotentialLinks(tile: Tile, team: Team, others: (other: Building) => void): void{
+    if(!this.autolink) return;
+
+    const valid = (other: Building | null): boolean =>
+      other !== null && other.tile !== tile && other.block.connectedPower && other.power !== null
+        && (other.block.outputsPower || other.block.consumesPower || other.block instanceof PowerNode)
+        && this.overlapsTile(tile.x * Vars.tilesize + this.offset, tile.y * Vars.tilesize + this.offset, other.tile, this.laserRange * Vars.tilesize)
+        && other.team === team.id
+        && !PowerNode.linkGraphs.has(other.power.graph)
+        && !PowerNode.insulated(tile, other.tile)
+        && !(other instanceof PowerNodeBuild && other.power.links.size >= (other.block as PowerNode).maxNodes)
+        && !Edges.getEdges(this.size).some(p => {
+          const t = Vars.world.tile(tile.x + p.x, tile.y + p.y);
+          return t !== null && t.build === other;
+        });
+
+    const tempBuilds: Building[] = [];
+    PowerNode.linkGraphs.clear();
+
+    // 把「邻近已导电图」记下来，防止重复连线（Java :250-255）
+    for(const p of Edges.getEdges(this.size)){
+      const other = tile.nearby(p.x, p.y);
+      if(other !== null && other.team().id === team.id && other.build !== null && other.build.power !== null){
+        PowerNode.linkGraphs.add(other.build.power.graph);
+      }
+    }
+    if(tile.build !== null && tile.build.power !== null){
+      PowerNode.linkGraphs.add(tile.build.power.graph);
+    }
+
+    // buildingTree 未移植 → 激光范围矩形扫描（Java :257-263 的 tree.intersect）
+    const r = this.laserRange;
+    const minX = Math.max(0, tile.x - r);
+    const maxX = Math.min(Vars.world.width() - 1, tile.x + r);
+    const minY = Math.max(0, tile.y - r);
+    const maxY = Math.min(Vars.world.height() - 1, tile.y + r);
+    for(let cx = minX; cx <= maxX; cx++){
+      for(let cy = minY; cy <= maxY; cy++){
+        const b = Vars.world.build(cx, cy);
+        if(b !== null && valid(b) && !tempBuilds.includes(b)){
+          tempBuilds.push(b);
+        }
+      }
+    }
+
+    // 筛序：powerNode 优先，其次按距离近到远（Java :264-268）
+    tempBuilds.sort((a, b) => {
+      const type = (a.block instanceof PowerNode ? 0 : 1) - (b.block instanceof PowerNode ? 0 : 1);
+      if(type !== 0) return type;
+      return PowerNode.dst2(a, tile) - PowerNode.dst2(b, tile);
+    });
+
+    let returnInt = 0;
+    for(const t of tempBuilds){
+      if(valid(t) && returnInt++ < this.maxNodes){
+        PowerNode.linkGraphs.add(t.power.graph);
+        others(t);
+      }
+    }
+  }
+
+  /**
+   * 对应 Java `getNodeLinks(Tile, Block, Team, Cons<Building>)`（:278-312）—— 放置任意电力方块时，
+   * 找出范围内可连的 powerNode 并逐个回调。由基类 `BuildingComp.placed()`
+   * （经 `Tile.afterPlaced`）驱动。分岔同 `getPotentialLinks`：buildingTree → maxRange 矩形扫描。
+   */
+  static getNodeLinks(tile: Tile, block: Block, team: Team, others: (other: Building) => void): void{
+    const valid = (other: Building | null): boolean =>
+      other !== null && other.tile !== tile && other.block instanceof PowerNode
+        && other.block.autolink
+        && other.power.links.size < other.block.maxNodes
+        && (other.block as PowerNode).overlapsTileBlock(other.x, other.y, tile, block, (other.block as PowerNode).laserRange * Vars.tilesize)
+        && other.team === team.id
+        && !PowerNode.linkGraphs.has(other.power.graph)
+        && !PowerNode.insulated(tile, other.tile)
+        && !Edges.getEdges(block.size).some(p => {
+          const t = Vars.world.tile(tile.x + p.x, tile.y + p.y);
+          return t !== null && t.build === other;
+        });
+
+    const tempBuilds: Building[] = [];
+    PowerNode.linkGraphs.clear();
+
+    for(const p of Edges.getEdges(block.size)){
+      const other = tile.nearby(p.x, p.y);
+      if(other !== null && other.team().id === team.id && other.build !== null && other.build.power !== null
+        && !(block.consumesPower && other.block().consumesPower && !block.outputsPower && !other.block().outputsPower)){
+        PowerNode.linkGraphs.add(other.build.power.graph);
+      }
+    }
+    if(tile.build !== null && tile.build.power !== null){
+      PowerNode.linkGraphs.add(tile.build.power.graph);
+    }
+
+    // buildingTree 未移植 → maxRange 矩形扫描（Java :291-297 的 tree.intersect）
+    const r = PowerNode.maxRange;
+    const minX = Math.max(0, tile.x - r);
+    const maxX = Math.min(Vars.world.width() - 1, tile.x + r);
+    const minY = Math.max(0, tile.y - r);
+    const maxY = Math.min(Vars.world.height() - 1, tile.y + r);
+    for(let cx = minX; cx <= maxX; cx++){
+      for(let cy = minY; cy <= maxY; cy++){
+        const b = Vars.world.build(cx, cy);
+        if(b !== null && valid(b) && !tempBuilds.includes(b)){
+          tempBuilds.push(b);
+        }
+      }
+    }
+
+    tempBuilds.sort((a, b) => {
+      const type = (a.block instanceof PowerNode ? 0 : 1) - (b.block instanceof PowerNode ? 0 : 1);
+      if(type !== 0) return type;
+      return PowerNode.dst2(a, tile) - PowerNode.dst2(b, tile);
+    });
+
+    for(const t of tempBuilds){
+      if(valid(t)){
+        PowerNode.linkGraphs.add(t.power.graph);
+        others(t);
+      }
+    }
+  }
 }
 
 /**
@@ -152,6 +352,24 @@ export class PowerNodeBuild extends Building{
       PowerNode.maxRange = this.node.laserRange;
     }
     super.created();
+  }
+
+  /**
+   * 对应 Java `placed()`（:395-404）—— 放置后自动拉线到范围内电力方块。
+   * ⚠️ Java: `if(net.client() || power.links.size > 0) return;` —— net 未移植（无多人）。
+   * ⚠️ 只在正式放置（`Build.beginPlace`）后被调；`Tile.setBlock` 不调它
+   *   （与 Java 一致，golden 不会自动拉线）。
+   */
+  override placed(): void{
+    if(this.power.links.size > 0) return;
+
+    this.node.getPotentialLinks(this.tile, Team.get(this.team), (other) => {
+      if(!this.power.links.contains(other.pos())){
+        this.configure(other.pos());
+      }
+    });
+
+    super.placed();
   }
 
   /**

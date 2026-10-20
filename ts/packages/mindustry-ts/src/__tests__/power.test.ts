@@ -34,6 +34,8 @@ import { Time } from "@mindustry-ts/arc";
 import { Vars } from "../Vars.js";
 import { Blocks } from "../content/Blocks.js";
 import { Items } from "../content/Items.js";
+import { Build } from "../world/Build.js";
+import { Team } from "../game/Team.js";
 import { ItemStack } from "../type/ItemStack.js";
 import { createWorld, placeBlock, runTicks } from "../harness.js";
 import { ConsumeItems } from "../world/consumers/ConsumeItems.js";
@@ -674,5 +676,75 @@ describe("power: ⑩ Battery 缓冲储电", () => {
     expect(bat.power.status).toBe(0);
     expect(c1.power.status).toBeCloseTo(2 / 3, 6);
     expect(c2.power.status).toBeCloseTo(2 / 3, 6);
+  });
+});
+
+
+// ---------------------------------------------------------------------------------------
+// ⑪ PowerNode 放置自动连线（C25）
+// ---------------------------------------------------------------------------------------
+//
+// ⚠️ 引发时机与 Java 一致：`placed()` 只在正式放置（`Build.beginPlace`）后被调；
+//   `Tile.setBlock`/harness `placeBlock` 不调它 —— golden 对拍不会自动拉线。
+//   · powerNode 放置 → `PowerNodeBuild.placed()` → `getPotentialLinks`（自己拉到附近电力方块）
+//   · 任意电力方块放置 → 基类 `placed()` → `getNodeLinks`（附近节点拉到它）
+// 夹具用 `instantBuild=true` 跳过核心扣费。
+// 反事实（已复原）：把 `PowerNodeBuild.placed()` 的守卫改成 `if(true) return;`（永不自动拉线）
+//   → ① 与 ⑤ 变红（`Tests 2 failed | 3 passed`），②（基类 placed → getNodeLinks 路径）仍绿
+//   —— 证明 ①/⑤ 依赖节点自身的 placed()，② 依赖基类 placed()，两条路径独立。
+
+describe("power: ⑪ PowerNode 放置自动连线", () => {
+  test("① 放置 powerNode 自动拉线到范围内的发电机", () => {
+    Build.beginPlace(4, 5, Blocks.combustionGenerator, Team.sharded, 0, true);
+    Build.beginPlace(6, 5, Blocks.powerNode, Team.sharded, 0, true); // 相距 2 格 < laserRange 6
+    const gen = Vars.world.tile(4, 5)!.build as ConsumeGeneratorBuild;
+    const node = Vars.world.tile(6, 5)!.build as PowerNodeBuild;
+    expect(node.power.links.size, "getPotentialLinks 应找到发电机").toBe(1);
+    expect(node.power.links.contains(gen.pos()), "双向连线").toBe(true);
+    expect(gen.power.links.contains(node.pos())).toBe(true);
+    expect(node.power.graph, "并入同一图").toBe(gen.power.graph);
+  });
+
+  test("② 放置发电机自动连到附近已有节点（基类 placed → getNodeLinks）", () => {
+    Build.beginPlace(6, 5, Blocks.powerNode, Team.sharded, 0, true);
+    Build.beginPlace(4, 5, Blocks.combustionGenerator, Team.sharded, 0, true);
+    const gen = Vars.world.tile(4, 5)!.build as ConsumeGeneratorBuild;
+    const node = Vars.world.tile(6, 5)!.build as PowerNodeBuild;
+    expect(node.power.links.size, "节点应被发电机的 placed() 拉线").toBe(1);
+    expect(gen.power.links.contains(node.pos())).toBe(true);
+    expect(node.power.graph).toBe(gen.power.graph);
+  });
+
+  test("③ 超出 laserRange 不自动拉线", () => {
+    Build.beginPlace(4, 5, Blocks.combustionGenerator, Team.sharded, 0, true);
+    Build.beginPlace(12, 5, Blocks.powerNode, Team.sharded, 0, true); // 相距 8 格 > 6
+    const gen = Vars.world.tile(4, 5)!.build as ConsumeGeneratorBuild;
+    const node = Vars.world.tile(12, 5)!.build as PowerNodeBuild;
+    expect(node.power.links.size).toBe(0);
+    expect(gen.power.links.size).toBe(0);
+  });
+
+  test("④ `Tile.setBlock`（golden 路径）不触发自动拉线，但邻接仍并图", () => {
+    placeBlock(4, 5, Blocks.combustionGenerator, 0);
+    placeBlock(5, 5, Blocks.powerNode, 0); // 相邻
+    const gen = Vars.world.tile(4, 5)!.build as ConsumeGeneratorBuild;
+    const node = Vars.world.tile(5, 5)!.build as PowerNodeBuild;
+    expect(node.power.links.size, "setBlock 不调 placed → 无自动连线").toBe(0);
+    expect(gen.power.links.size).toBe(0);
+    expect(node.power.graph, "但邻接传导仍能并图").toBe(gen.power.graph);
+  });
+
+  test("⑤ 自动拉线 + 手动拉线组成完整供电链（节点把电源带给远处耗电方块）", () => {
+    Build.beginPlace(4, 5, Blocks.combustionGenerator, Team.sharded, 0, true);
+    Build.beginPlace(6, 5, Blocks.powerNode, Team.sharded, 0, true); // 自动拉线到 gen
+    const gen = Vars.world.tile(4, 5)!.build as ConsumeGeneratorBuild;
+    gen.items.add(Items.coal, 60);
+    const node = Vars.world.tile(6, 5)!.build as PowerNodeBuild;
+    const c = place<GenericCrafterBuild>(11, 5, makeCrafter(0.5)); // 相距 5 格，手动拉线
+    c.items.setAmount(Items.coal, 10);
+    node.configure(c.pos());
+    runTicks(2);
+    expect(c.power.status, "节点把发电机电力带给远处工厂").toBe(1);
+    expect(gen.power.graph.all.size, "gen+node+crafter 同图").toBe(3);
   });
 });

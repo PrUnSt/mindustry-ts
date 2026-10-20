@@ -365,6 +365,18 @@ export abstract class BuildingComp implements Healthc, Teamc{
   created(): void{ }
 
   /**
+   * 对应 Java `placed()`（`BuildingComp.java:1361-1370`，`@CallSuper`）。
+   * 调用时机：正式放置（玩家/机器人，非 `Tile.setBlock`）后。
+   * → “任意电力方块放置后自动连到附近 powerNode”的语义。
+   * ⚠️ 生成文件无法 import `PowerNode`（codegen 约束）→ 委托给
+   * `tile.afterPlaced(this)`（手写 `Tile` 可以 import `PowerNode`，同
+   * `updateProximity → tile.rebuildProximity` 的先例）。
+   */
+  placed(): void{
+    if(this.tile !== null) this.tile.afterPlaced(this);
+  }
+
+  /**
    * 加入世界（Java `BuildingComp.add()`，:162-168）。
    *
    * ⚠️ 为什么必须有这一条：Java 的 `add()` 里 `if(power != null) power.graph.checkAdd();`

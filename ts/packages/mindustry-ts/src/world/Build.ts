@@ -185,6 +185,10 @@ export class Build{
 
     // 6. 落地（`ConstructBlock.constructFinish` 的实体化步骤）
     tile.setBlock(block, team, rotation);
+    // C25: `placed()` —— Java 的 `Build.placeBlock` 在落地后调它（`Build.java`）。
+    //   用于 powerNode 自动拉线等放置生命周期钩子；仅正式放置路径触发，
+    //   `Tile.setBlock`/golden 不调它（与 Java 一致）。
+    tile.build?.placed();
     return true;
   }
 

@@ -36,6 +36,7 @@ import {
 } from "../game/EventType.js";
 import { Edges } from "./Edges.js";
 import { Geometry } from "../arc-compat/Geometry.js";
+import { PowerNode, PowerNodeBuild } from "./blocks/power/PowerNode.js";
 import type { Block } from "./Block.js";
 import type { Floor } from "./blocks/environment/Floor.js";
 import type { Building } from "../gen/Building.js";
@@ -820,6 +821,26 @@ export class Tile{
 
     // Java 末尾: `if(!headless && block.drawCached) recache();`
     // —— `recache()` 的唯一副作用是 renderer 缓存失效，headless 下本就是 no-op（计划 §9）。
+  }
+
+  /**
+   * C25 边界适配器：等价 Java `BuildingComp.placed()`（`BuildingComp.java:1361-1370`）。
+   * ⚠️ 为什么在 `Tile`: `gen/Building.ts` 是 codegen 产物，无法 import
+   * `PowerNode`（只能 import「组件接口名 / Groups / 基类名」）→
+   * `BuildingComp.placed()` 委托到这里（同 `updateProximity → rebuildProximity` 的先例）。
+   * 语义：任意“消耗或输出电力”的方块放置后，把附近 powerNode
+   * 自动拉到自己身上（`getNodeLinks`）。`PowerNodeBuild.placed()` 另有
+   * 自己的“自己拉到附近电力方块”（`getPotentialLinks`）。
+   */
+  afterPlaced(build: Building): void{
+    if((build.block.consumesPower || build.block.outputsPower) && build.block.hasPower && build.block.connectedPower){
+      PowerNode.getNodeLinks(this, build.block, Team.get(build.team), (other) => {
+        if(!other.power.links.contains(build.pos())){
+          // Java `other.configureAny(build.pos())` → Integer 配置→ `PowerNodeBuild.configure`
+          (other as PowerNodeBuild).configure(build.pos());
+        }
+      });
+    }
   }
 
   /** 对应 Java `BuildingComp.removeFromProximity()`。 */
