@@ -65,6 +65,7 @@ import { Unit as UnitBase } from "../gen/Unit.js";
 import { Groups } from "../gen/Groups.js";
 import type { Posc } from "../gen/Posc.js";
 import type { UnitType } from "../type/UnitType.js";
+import type { AIController } from "./units/AIController.js";
 
 /**
  * 推进 `Groups.unit` 一帧。等价 Java `Logic.updateEntities()` 里的 `Groups.unit.update()`
@@ -82,6 +83,10 @@ export class UnitRuntime extends UnitBase{
    * 默认 null（Java 默认是 `UnitTypes.alpha`，但本阶段单位类型需显式 `setType`）。
    */
   type: UnitType | null = null;
+  /** C27: 单位 AI 控制器（`AIController`）；null = 无指令裸单位。 */
+  controller: AIController | null = null;
+  /** C27: 本 tick 是否在开火（AI 写入，渲染/测试用）。 */
+  isShooting = false;
 
   /** `Groups.unit` 的索引（与 `BulletRuntime.index__bullet` 同型记账）。 */
   private index__unit = -1;
@@ -342,6 +347,11 @@ export class UnitRuntime extends UnitBase{
     return type.speed * boost;
   }
 
+  /** C27: 对应 Java `Unit.range()`（= `type.range`，攻击射程）。 */
+  range(): number{
+    return this.type === null ? 0 : this.type.range;
+  }
+
   // ---------------------------------------------------------------- update
 
   /**
@@ -360,6 +370,9 @@ export class UnitRuntime extends UnitBase{
       this.remove();
       return;
     }
+
+    // C27: 单位 AI —— 在位移前驱动控制器（AI 设置速度，下面的 VelComp 再用它移动）。
+    this.controller?.updateUnit();
 
     // ---- VelComp.update()（@MethodPriority(-1)，最先执行）----
     const px = this.x;

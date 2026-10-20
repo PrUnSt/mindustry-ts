@@ -63,6 +63,7 @@
 
 import { Angles, Events, Mathf, Seq, Time, Vec2 } from "@mindustry-ts/arc";
 import { Vars } from "../Vars.js";
+import { AIController } from "../entities/units/AIController.js";
 import { World } from "../core/World.js";
 import { TileOverlayChangeEvent, WaveEvent } from "./EventType.js";
 import type { Tile } from "../world/Tile.js";
@@ -163,6 +164,8 @@ export class SpawnGroup{
   ): UnitRuntime{
     // Java: `Unit unit = type.spawn(team, x, y, rotation, cons);`
     const unit = this.type!.spawn(team, x, y, rotation);
+    // C27: 波次单位装配 AI（寻敌/移动/开火；Logic 已驱动 `Groups.unit.update()`）。
+    unit.controller = new AIController(unit);
     // Java `:84-92`: effect / items / `unit.shield = getShield(wave)` —— 未移植（见文件头）。
     // Java `:94-101`: payloads —— 未移植（见文件头）。
     void wave;
