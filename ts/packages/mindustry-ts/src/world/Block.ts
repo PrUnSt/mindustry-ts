@@ -31,6 +31,8 @@ import type { Prov } from "@mindustry-ts/arc";
 import { Consume } from "./consumers/Consume.js";
 import { ConsumeItems } from "./consumers/ConsumeItems.js";
 import { ConsumePower } from "./consumers/ConsumePower.js";
+import { ConsumeLiquidBase } from "./consumers/ConsumeLiquidBase.js";
+import { ConsumeLiquid } from "./consumers/ConsumeLiquid.js";
 import { PowerModule } from "./modules/PowerModule.js";
 import { Color } from "../arc-compat/Color.js";
 import { ContentType } from "../ctype/ContentType.js";
@@ -38,6 +40,7 @@ import { UnlockableContent } from "../ctype/UnlockableContent.js";
 import { Vars } from "../Vars.js";
 import { Category } from "../type/Category.js";
 import type { Item } from "../type/Item.js";
+import type { Liquid } from "../type/Liquid.js";
 import { ItemStack } from "../type/ItemStack.js";
 import { CacheLayer } from "../mocks/CacheLayer.js";
 import { Fx, Effect } from "../mocks/Fx.js";
@@ -481,6 +484,11 @@ export class Block extends UnlockableContent{
     return this.consume(new ConsumePower(0, powerCapacity, true));
   }
 
+  /** 对应 Java `consumeLiquid(Liquid, float)`（`Block.java:1202-1204`）。 */
+  consumeLiquid(liquid: Liquid, amount: number): ConsumeLiquid{
+    return this.consume(new ConsumeLiquid(liquid, amount));
+  }
+
   /**
    * 分配电力模块（对应 Java `BuildingComp.create()` 里的 `power = new PowerModule()` 两行，
    * `BuildingComp.java:153-156`）。
@@ -609,6 +617,18 @@ export class Block extends UnlockableContent{
    */
   consumesItem(item: Item): boolean{
     return this.itemFilter[item.id] === true;
+  }
+
+  /**
+   * 对应 Java `consumesLiquid(Liquid)`（`Block.java:793-796`）—— 该方块是否消耗这种液体。
+   * `BuildingComp.acceptLiquid()`（BuildingComp.java:875）靠它决定「收不收这种液」。
+   * ⚠️ TS 无 `liquidFilter` 数组 → 直接遍历 `updateConsumers` 中的液体消费者。
+   */
+  consumesLiquid(liquid: Liquid): boolean{
+    for(const cons of this.updateConsumers){
+      if(cons instanceof ConsumeLiquidBase && cons.consumes(liquid)) return true;
+    }
+    return false;
   }
 
   /** 对应 Java `asFloor()`：把本方块视作地板（Java 是 `(Floor)this` 强转）。 */
@@ -777,7 +797,18 @@ export class Block extends UnlockableContent{
     this.lightClipSize = Math.max(this.lightClipSize, this.clipSize);
 
     // TODO(S4): hasLiquids && drawLiquidLight → emitLight = true
-    // TODO(S4): liquidCapacity < 0 时按液体消耗量推导
+
+    // C28: `liquidCapacity < 0` 时按液体消耗量推导（Java `Block.java:787-793` 的 `calculateLiquidCapacity`）。
+    if(this.liquidCapacity < 0){
+      let cap = 0;
+      for(const cons of this.updateConsumers){
+        if(cons instanceof ConsumeLiquidBase && cons.amount > 0){
+          cap = Math.max(cap, cons.amount);
+        }
+      }
+      this.liquidCapacity = Math.max(cap * 20, 10);
+    }
+
     // TODO(S4): emitLight → lightClipSize = max(lightClipSize, lightRadius * 2)
 
     if(this.group === BlockGroup.transportation || this.category === Category.distribution){

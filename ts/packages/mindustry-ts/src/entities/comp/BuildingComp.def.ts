@@ -785,17 +785,62 @@ export abstract class BuildingComp implements Healthc, Teamc{
     return false;
   }
 
-  /** 对应 Java `acceptLiquid(Building, Liquid)`。 */
+  /** 对应 Java `acceptLiquid(Building, Liquid)`（:873-875）。 */
   acceptLiquid(_source: Building, _liquid: any): boolean{
-    // Java: `block.hasLiquids && block.consumesLiquid(liquid)`；`consumesLiquid` 依赖消费者体系
-    // （S4 未移植，计划 §9）→ 与 `acceptItem` 同处置: **恒 false**。
-    // 这与 Java 在「方块不消耗任何液体」时完全一致（S4 的方块集合里没有液体消费者）。
-    return false;
+    // Java: `block.hasLiquids && block.consumesLiquid(liquid)`（C28 起 `consumesLiquid` 已移植）。
+    return this.block.hasLiquids && this.block.consumesLiquid(_liquid);
   }
 
   /** 对应 Java `handleLiquid(Building, Liquid, float)`。 */
   handleLiquid(_source: Building, liquid: any, amount: number): void{
     this.liquids.add(liquid, amount);
+  }
+
+  /** 对应 Java `relativeTo(Building)`（:836-839）。 */
+  relativeTo(other: Building): number{
+    if(this.tile === null || other.tile === null) return -1;
+    return this.tile.relativeTo(other.tile);
+  }
+
+  /** 对应 Java `getLiquidDestination(Building, Liquid)`（:840-842）—— 液体的最终落点。 */
+  getLiquidDestination(_source: Building, _liquid: any): any{
+    return this;
+  }
+
+  /** 对应 Java `canDumpLiquid(Building, Liquid)`（:893-895）—— 基类恒 true。 */
+  canDumpLiquid(_to: Building, _liquid: any): boolean{
+    return true;
+  }
+
+  /** 对应 Java `transferLiquid(Building, float, Liquid)`（:897-904）—— 尽可能多地把液体移到对端。 */
+  transferLiquid(next: any, amount: number, liquid: any): void{
+    const flow = Math.min(next.block.liquidCapacity - next.liquids.get(liquid), amount);
+    if(next.acceptLiquid(this, liquid)){
+      next.handleLiquid(this, liquid, flow);
+      this.liquids.remove(liquid, flow);
+    }
+  }
+
+  /**
+   * 对应 Java `dumpLiquid` 的三个重载（:882-911）。
+   * ⚠️ codegen 不支持同名重载 → 合并为一个方法，用默认参数覆盖三种调用形式：
+   *   `dumpLiquid(liquid)` → (liquid, 2, -1)；`dumpLiquid(liquid, scaling)` → (liquid, scaling, -1)。
+   */
+  dumpLiquid(liquid: any, scaling: number = 2, outputDir: number = -1): void{
+    let dump = this.cdump;
+    if(this.liquids.get(liquid) <= 0.0001) return;
+
+    for(let i = 0; i < this.proximity.length; i++){
+      this.incrementDump(this.proximity.length);
+      let other: any = this.proximity[(i + dump) % this.proximity.length]!;
+      if(outputDir !== -1 && (outputDir + this.rotation) % 4 !== this.relativeTo(other)) continue;
+      other = other.getLiquidDestination(this, liquid);
+      if(other !== null && other.block.hasLiquids && this.canDumpLiquid(other, liquid) && other.liquids !== null){
+        const ofract = other.liquids.get(liquid) / other.block.liquidCapacity;
+        const fract = this.liquids.get(liquid) / this.block.liquidCapacity;
+        if(ofract < fract) this.transferLiquid(other, (fract - ofract) * this.block.liquidCapacity / scaling, liquid);
+      }
+    }
   }
 
   /** Java `getX`（Position）。 */
