@@ -45,6 +45,9 @@ import { ConsumeGenerator, ConsumeGeneratorBuild } from "../world/blocks/power/C
 import { PowerGraph } from "../world/blocks/power/PowerGraph.js";
 import { PowerNodeBuild } from "../world/blocks/power/PowerNode.js";
 import { Battery, BatteryBuild } from "../world/blocks/power/Battery.js";
+import { ThermalGenerator, ThermalGeneratorBuild } from "../world/blocks/power/ThermalGenerator.js";
+import { Floor } from "../world/blocks/environment/Floor.js";
+import { Attribute } from "../world/meta/Attribute.js";
 import { Point2 } from "@mindustry-ts/arc";
 import {
   GenericCrafter,
@@ -746,5 +749,83 @@ describe("power: ⑪ PowerNode 放置自动连线", () => {
     runTicks(2);
     expect(c.power.status, "节点把发电机电力带给远处工厂").toBe(1);
     expect(gen.power.graph.all.size, "gen+node+crafter 同图").toBe(3);
+  });
+});
+
+
+// ---------------------------------------------------------------------------------------
+// ⑫ ThermalGenerator 热能发电 + batteryLarge（C26）
+// ---------------------------------------------------------------------------------------
+//
+// ⚠️ ThermalGenerator 产电 = `sumAttribute(attribute, tile) + attribute.env()`；env 恒 0。
+//   热属性来自 `Floor.attributes`（普通空气/石地无热 → 产电 0）→ 测试需自建带
+//   `Attribute.heat` 的地板夹具，`setFloor` 后再放发电机（onProximityAdded 算 sum）。
+// 反事实（已复原）：把 `ThermalGeneratorBuild.updateTile()` 的 productionEfficiency 改成 0
+//   → ①② 变红（`expected +0 to be 0.5` / `expected +0 to be 2`），复原全绿。
+
+describe("power: ⑫ ThermalGenerator \u70ed\u80fd\u53d1\u7535 + batteryLarge", () => {
+  /** \u81ea\u5efa\u4e00\u5f20\u5e26 `heat` \u5c5e\u6027\u7684\u5730\u677f\u5939\u5177\u3002 */
+  function makeHeatFloor(value: number): Floor{
+    const f = new Floor(nextName("heat-floor"));
+    f.attributes.set(Attribute.heat, value);
+    f.init();
+    return f;
+  }
+
+  /** \u81ea\u5efa size-1 \u70ed\u80fd\u53d1\u7535\u673a\u5939\u5177\uff08\u907f\u514d\u591a\u5757\u5730\u677f\u8986\u76d6\u590d\u6742\u5ea6\uff09\u3002 */
+  function makeThermal(power: number): ThermalGenerator{
+    const b = new ThermalGenerator(nextName("thermal"));
+    b.size = 1;
+    b.powerProduction = power;
+    b.init();
+    return b;
+  }
+
+  test("\u2460 \u65e0\u70ed\u5730\u677f\u2192 \u4ea7\u7535 0\uff1b\u94fa\u70ed\u5730\u677f\uff08heat=0.5\uff09\u540e\u2192 productionEfficiency 0.5 \u3001\u4ea7\u7535 0.5", () => {
+    const g0 = place<ThermalGeneratorBuild>(5, 5, makeThermal(1)); // \u77f3\u5730\uff08\u65e0\u70ed\uff09
+    runTicks(2);
+    expect(g0.sum).toBe(0);
+    expect(g0.productionEfficiency).toBe(0);
+    expect(g0.getPowerProduction()).toBe(0);
+
+    Vars.world.tile(7, 5)!.setFloor(makeHeatFloor(0.5));
+    const g = place<ThermalGeneratorBuild>(7, 5, makeThermal(1));
+    expect(g.sum, "onProximityAdded \u5df2\u7b97\u70ed\u91cf\u603b\u548c").toBe(0.5);
+    runTicks(1);
+    expect(g.productionEfficiency, "productionEfficiency = sum + env() = 0.5").toBe(0.5);
+    expect(g.getPowerProduction(), "产电 = powerProduction * efficiency = 0.5").toBeCloseTo(0.5, 6);
+  });
+
+  test("\u2461 \u6539\u5730\u677f\u4e3a\u66f4\u9ad8\u70ed\u503c\uff08heat=2\uff09\u2192 \u4ea7\u7535\u7ffb\u4e58", () => {
+    Vars.world.tile(5, 5)!.setFloor(makeHeatFloor(2));
+    const g = place<ThermalGeneratorBuild>(5, 5, makeThermal(0.5));
+    runTicks(1);
+    expect(g.productionEfficiency).toBe(2);
+    expect(g.getPowerProduction()).toBeCloseTo(0.5 * 2, 6);
+  });
+
+  test("\u2462 canPlaceOn: \u65e0\u70ed\u5730\u7247 false\uff1b\u70ed\u5730\u7247 true", () => {
+    const block = makeThermal(1);
+    const stoneTile = Vars.world.tile(3, 3)!;
+    expect(block.canPlaceOn(stoneTile, Team.sharded, 0)).toBe(false);
+    stoneTile.setFloor(makeHeatFloor(0.1));
+    expect(block.canPlaceOn(stoneTile, Team.sharded, 0)).toBe(true);
+  });
+
+  test("\u2463 \u6ce8\u518c\u7684 thermal-generator \u5b57\u6bb5\uff08powerProduction 1.8 / size 2 / floating\uff09", () => {
+    expect(Blocks.thermalGenerator.powerProduction).toBe(1.8);
+    expect(Blocks.thermalGenerator.size).toBe(2);
+    expect(Blocks.thermalGenerator.floating).toBe(true);
+    expect(Blocks.thermalGenerator.attribute).toBe(Attribute.heat);
+  });
+
+  test("\u2464 \u6ce8\u518c\u7684 batteryLarge\uff1a\u5b57\u6bb5 + PowerGraph \u5206\u7c7b\u8fdb batteries", () => {
+    expect(Blocks.batteryLarge.consPower!.buffered).toBe(true);
+    expect(Blocks.batteryLarge.consPower!.capacity).toBe(50000);
+    expect(Blocks.batteryLarge.size).toBe(3);
+    const bat = place<BatteryBuild>(5, 5, Blocks.batteryLarge);
+    expect(bat.power.graph.batteries.size).toBe(1);
+    expect(bat.power.graph.consumers.size).toBe(0);
+    expect(bat.power.graph.getTotalBatteryCapacity()).toBe(50000);
   });
 });

@@ -110,6 +110,7 @@ import { CoreBlock } from "../world/blocks/storage/CoreBlock.js";
 import { GenericCrafter } from "../world/blocks/production/GenericCrafter.js";
 import { ConsumeGenerator } from "../world/blocks/power/ConsumeGenerator.js";
 import { SolarGenerator } from "../world/blocks/power/SolarGenerator.js";
+import { ThermalGenerator } from "../world/blocks/power/ThermalGenerator.js";
 import { PowerNode } from "../world/blocks/power/PowerNode.js";
 import { Battery } from "../world/blocks/power/Battery.js";
 import { UnitFactory, UnitPlan } from "../world/blocks/units/UnitFactory.js";
@@ -169,6 +170,10 @@ export class Blocks{
 
   /** 电池（C23 · 缓冲储电；`Java Blocks.java:2510-2514`）。 */
   static battery: Battery;
+  /** 大电池（C26 · `Java Blocks.java:2516-2521`）。 */
+  static batteryLarge: Battery;
+  /** 热能发电机（C26 · `Java Blocks.java:2543-2551`）。 */
+  static thermalGenerator: ThermalGenerator;
 
   /** 地面工厂（C24 · 单位生产；`Java Blocks.java:6302-6313`）。 */
   static groundFactory: UnitFactory;
@@ -448,6 +453,38 @@ export class Blocks{
     ]);
     Blocks.battery.consumePowerBuffered(4000);
     Blocks.battery.baseExplosiveness = 1;
+
+    // ---- C26 大电池 + 热能发电机 ----
+    // `Blocks.java:2516-2521`：`batteryLarge = new Battery("battery-large"){{
+    //   requirements(Category.power, with(Items.titanium, 20, Items.lead, 50, Items.silicon, 30));
+    //   size = 3; consumePowerBuffered(50000f); baseExplosiveness = 5f; }};`
+    Blocks.batteryLarge = new Battery("battery-large");
+    Blocks.batteryLarge.setRequirements(Category.power, [
+      new ItemStack(Items.titanium, 20),
+      new ItemStack(Items.lead, 50),
+      new ItemStack(Items.silicon, 30),
+    ]);
+    Blocks.batteryLarge.size = 3;
+    Blocks.batteryLarge.consumePowerBuffered(50000);
+    Blocks.batteryLarge.baseExplosiveness = 5;
+
+    // `Blocks.java:2543-2551`：`thermalGenerator = new ThermalGenerator("thermal-generator"){{
+    //   requirements(Category.power, with(Items.copper, 40, Items.graphite, 35, Items.lead, 50,
+    //     Items.silicon, 35, Items.metaglass, 40)); powerProduction = 1.8f; effectChance = 0.011f;
+    //   size = 2; floating = true; }};`
+    // ⚠️ `generateEffect`/`ambientSound` 为渲染/音效层。
+    Blocks.thermalGenerator = new ThermalGenerator("thermal-generator");
+    Blocks.thermalGenerator.setRequirements(Category.power, [
+      new ItemStack(Items.copper, 40),
+      new ItemStack(Items.graphite, 35),
+      new ItemStack(Items.lead, 50),
+      new ItemStack(Items.silicon, 35),
+      new ItemStack(Items.metaglass, 40),
+    ]);
+    Blocks.thermalGenerator.powerProduction = 1.8;
+    Blocks.thermalGenerator.effectChance = 0.011;
+    Blocks.thermalGenerator.size = 2;
+    Blocks.thermalGenerator.floating = true;
 
     // ---- C24 单位生产（ground-factory）----
     // Java `Blocks.java:6302-6313`：`groundFactory = new UnitFactory("ground-factory"){{

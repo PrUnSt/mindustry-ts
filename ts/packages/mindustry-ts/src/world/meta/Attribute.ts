@@ -73,6 +73,15 @@ export class Attribute{
     return Attribute.map.has(name);
   }
 
+  /**
+   * 对应 Java `env()`（`Attribute.java:31-33`）—— 该属性在当前环境下的天然值。
+   * Java 原文：`return attribute == null ? 0f : attribute.env();`（基属性无父节点 → 0）。
+   * ⚠️ TS 无行星环境附加值（`Planet`/变体属性未移植）→ 恒返 0（陆地地图与 Java 一致）。
+   */
+  env(): number{
+    return 0;
+  }
+
   /** 对应 Java `toString()`。 */
   toString(): string{
     return this.name;
