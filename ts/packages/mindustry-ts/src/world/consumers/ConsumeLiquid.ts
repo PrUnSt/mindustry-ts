@@ -4,8 +4,8 @@
 //   （`build(Table)` / `display(Stats)` —— UI，未移植，计划 §9。）
 //
 // ⚠️ 与 Java 的差异（写清）:
-//   - `apply` 里的 `block.liquidFilter[liquid.id] = true`（:22-24）—— TS `Block` 无
-//     `liquidFilter` 数组（与 `ConsumeItems` 的 `itemFilter` 同一处置）→ 省略；
+//   - `apply` 里的 `block.liquidFilter[liquid.id] = true`（:22-24）—— C29 起
+//     `Block.liquidFilter` 已存在（init 按液体数量分配），此行已落地。
 //     `acceptLiquid` 的闸门靠 `Block.consumesLiquid()`（遍历 updateConsumers）承担。
 //   - `update` / `efficiency` 用到 `build.edelta()`；TS 生成基类没有 `edelta()`
 //     （具象建筑各自实现）→ 用 `edeltaOf()` 兜底（现算 = `efficiency * Time.delta * timeScale`，
@@ -33,9 +33,10 @@ export class ConsumeLiquid extends ConsumeLiquidBase{
     this.liquid = liquid;
   }
 
-  /** 对应 Java `apply(Block)`（:21-25）。`liquidFilter` 省略（见文件头）。 */
+  /** 对应 Java `apply(Block)`（:21-25）—— 填 `liquidFilter` 让 `acceptLiquid` 收这种液体。 */
   override apply(block: Block): void{
     super.apply(block);
+    if(this.liquid.id < block.liquidFilter.length) block.liquidFilter[this.liquid.id] = true;
   }
 
   /** 对应 Java `update(Building)`（:36-38）—— 每 tick 按用量扣液。 */

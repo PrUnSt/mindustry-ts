@@ -163,6 +163,13 @@ export class Block extends UnlockableContent{
    * `consumesItem(item)` 直接读它。
    */
   itemFilter: boolean[] = [];
+  /**
+   * 每种液体「是否被本方块消耗」（Java `public boolean[] liquidFilter = {}`，`Block.java:410`）。
+   * 由 `ConsumeLiquid.apply()` 填 true；`consumesLiquid()` 直接读它（Java :791-793）。
+   * ⚠️ 不能用「遍历 updateConsumers」代替：冷却液消耗者常 `.update(false)`（不进
+   *   updateConsumers），但仍必须让 `acceptLiquid` 收这种液体。
+   */
+  liquidFilter: boolean[] = [];
   /** 是否有液体模块。 */
   hasLiquids = false;
   /** 是否有电力模块。 */
@@ -625,10 +632,8 @@ export class Block extends UnlockableContent{
    * ⚠️ TS 无 `liquidFilter` 数组 → 直接遍历 `updateConsumers` 中的液体消费者。
    */
   consumesLiquid(liquid: Liquid): boolean{
-    for(const cons of this.updateConsumers){
-      if(cons instanceof ConsumeLiquidBase && cons.consumes(liquid)) return true;
-    }
-    return false;
+    // Java :791-793 `return liquidFilter[liq.id];`
+    return this.liquidFilter[liquid.id] === true;
   }
 
   /** 对应 Java `asFloor()`：把本方块视作地板（Java 是 `(Floor)this` 强转）。 */
@@ -845,6 +850,7 @@ export class Block extends UnlockableContent{
     // ⚠️ `itemFilter` 必须在 `apply(this)` **之前**分配（`ConsumeItems.apply` 要写它），
     //    与 Java `Block.init():1471` 的顺序一致。
     this.itemFilter = new Array<boolean>(Vars.content.items().size).fill(false);
+    this.liquidFilter = new Array<boolean>(Vars.content.liquids().size).fill(false);
 
     this.consumers = this.consumeBuilder.slice();
     this.optionalConsumers = this.consumeBuilder.filter(c => c.optional && !c.ignore());

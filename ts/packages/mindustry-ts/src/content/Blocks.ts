@@ -104,6 +104,7 @@ import { Category } from "../type/Category.js";
 import { Env } from "../world/meta/Env.js";
 import { ContentType } from "../ctype/ContentType.js";
 import { Items } from "./Items.js";
+import { Liquids } from "./Liquids.js";
 import { ItemStack } from "../type/ItemStack.js";
 import { Drill } from "../world/blocks/production/Drill.js";
 import { CoreBlock } from "../world/blocks/storage/CoreBlock.js";
@@ -111,6 +112,8 @@ import { GenericCrafter } from "../world/blocks/production/GenericCrafter.js";
 import { ConsumeGenerator } from "../world/blocks/power/ConsumeGenerator.js";
 import { SolarGenerator } from "../world/blocks/power/SolarGenerator.js";
 import { ThermalGenerator } from "../world/blocks/power/ThermalGenerator.js";
+import { NuclearReactor } from "../world/blocks/power/NuclearReactor.js";
+import { ImpactReactor } from "../world/blocks/power/ImpactReactor.js";
 import { PowerNode } from "../world/blocks/power/PowerNode.js";
 import { Battery } from "../world/blocks/power/Battery.js";
 import { UnitFactory, UnitPlan } from "../world/blocks/units/UnitFactory.js";
@@ -174,6 +177,10 @@ export class Blocks{
   static batteryLarge: Battery;
   /** 热能发电机（C26 · `Java Blocks.java:2543-2551`）。 */
   static thermalGenerator: ThermalGenerator;
+  /** 钩发反应堆（C29 · `Java Blocks.java:2630-2645`）。 */
+  static thoriumReactor: NuclearReactor;
+  /** 冲击反应堆（C29 · `Java Blocks.java:2650-2664`）。 */
+  static impactReactor: ImpactReactor;
 
   /** 地面工厂（C24 · 单位生产；`Java Blocks.java:6302-6313`）。 */
   static groundFactory: UnitFactory;
@@ -485,6 +492,50 @@ export class Blocks{
     Blocks.thermalGenerator.effectChance = 0.011;
     Blocks.thermalGenerator.size = 2;
     Blocks.thermalGenerator.floating = true;
+
+    // ---- C29 反应堆 ----
+    // `Blocks.java:2630-2645`：thorium-reactor；size=3 health=1400 itemDuration=360 powerProduction=15
+    //   heating=0.005 coolantPower=0.125; consumeItem(thorium);
+    //   consumeLiquid(cryofluid, heating/coolantPower=0.04).update(false)。
+    Blocks.thoriumReactor = new NuclearReactor("thorium-reactor");
+    Blocks.thoriumReactor.setRequirements(Category.power, [
+      new ItemStack(Items.lead, 300),
+      new ItemStack(Items.silicon, 200),
+      new ItemStack(Items.graphite, 150),
+      new ItemStack(Items.thorium, 150),
+      new ItemStack(Items.metaglass, 50),
+    ]);
+    Blocks.thoriumReactor.size = 3;
+    Blocks.thoriumReactor.health = 1400;
+    Blocks.thoriumReactor.itemDuration = 360;
+    Blocks.thoriumReactor.powerProduction = 15;
+    Blocks.thoriumReactor.heating = 0.005;
+    Blocks.thoriumReactor.coolantPower = 0.125;
+    Blocks.thoriumReactor.consumeItem(Items.thorium);
+    {
+      const coolant = Blocks.thoriumReactor.consumeLiquid(Liquids.cryofluid, 0.005 / 0.125);
+      coolant.update = false; // 不自动扣液，由 updateTile 手动扣（Java .update(false)）
+    }
+
+    // `Blocks.java:2650-2664`：impact-reactor；size=4 health=900 powerProduction=130 itemDuration=140
+    //   liquidCapacity=80; consumePower(25); consumeItem(blastCompound); consumeLiquid(cryofluid, 0.25)。
+    Blocks.impactReactor = new ImpactReactor("impact-reactor");
+    Blocks.impactReactor.setRequirements(Category.power, [
+      new ItemStack(Items.lead, 500),
+      new ItemStack(Items.silicon, 300),
+      new ItemStack(Items.graphite, 400),
+      new ItemStack(Items.thorium, 100),
+      new ItemStack(Items.surgeAlloy, 250),
+      new ItemStack(Items.metaglass, 250),
+    ]);
+    Blocks.impactReactor.size = 4;
+    Blocks.impactReactor.health = 900;
+    Blocks.impactReactor.powerProduction = 130;
+    Blocks.impactReactor.itemDuration = 140;
+    Blocks.impactReactor.liquidCapacity = 80;
+    Blocks.impactReactor.consumePower(25);
+    Blocks.impactReactor.consumeItem(Items.blastCompound);
+    Blocks.impactReactor.consumeLiquid(Liquids.cryofluid, 0.25);
 
     // ---- C24 单位生产（ground-factory）----
     // Java `Blocks.java:6302-6313`：`groundFactory = new UnitFactory("ground-factory"){{
